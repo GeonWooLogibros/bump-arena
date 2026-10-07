@@ -5,7 +5,7 @@ import { encodeBall, encodeHost, readPeer, roundKey } from '../src/net/wire';
 import type { PeerState } from '../src/net/wire';
 import { NO_INPUT } from '../src/physics/world';
 import type { BallView, Input, WorldEvent } from '../src/physics/world';
-import { MAX_FRAME_MS, Session } from '../src/session';
+import { MAX_FRAME_MS, NET_LEAD, Session } from '../src/session';
 import type { Frame } from '../src/session';
 
 const FRAME_MS = 16;
@@ -76,7 +76,11 @@ class Room {
   readonly events = new Map<string, WorldEvent[]>();
   readonly states = new Map<string, PeerState>();
   private readonly sessions = new Map<string, Session>();
+  /** 모든 사람의 peers 맨 앞에 끼워 넣는 상태입니다. */
+  extra: PeerState[] = [];
   private readonly frozen = new Set<string>();
+  private readonly hidden = new Set<string>();
+  private forcedHost: string | null = null;
   private frames = 0;
 
   constructor(ids: string[]) {
@@ -84,7 +88,12 @@ class Room {
   }
 
   get host(): string {
-    return [...this.sessions.keys()][0];
+    return this.forcedHost ?? [...this.sessions.keys()][0];
+  }
+
+  /** 방장을 바꿉니다. 이전 방장은 다음 프레임부터 참가자가 됩니다. */
+  setHost(id: string): void {
+    this.forcedHost = id;
   }
 
   get(id: string): Session {
@@ -109,6 +118,20 @@ class Room {
     this.frozen.add(id);
   }
 
+  /** 멈췄던 사람이 다시 계산하고 올리게 합니다. */
+  thaw(id: string): void {
+    this.frozen.delete(id);
+  }
+
+  /** 계산은 계속하지만 다른 사람에게 보이지 않게 합니다(잠깐 끊긴 연결). */
+  hide(id: string): void {
+    this.hidden.add(id);
+  }
+
+  show(id: string): void {
+    this.hidden.delete(id);
+  }
+
   run(ms: number): void {
     for (let left = ms; left > 0; left -= FRAME_MS) this.frame();
   }
@@ -131,7 +154,8 @@ class Room {
     for (const [id, session] of this.sessions) {
       if (this.frozen.has(id)) continue;
       const hosting = id === host;
-      const peers = [...this.states].filter(([peer]) => peer !== id).map(([, state]) => state);
+      const others = [...this.states].filter(([peer]) => peer !== id && !this.hidden.has(peer));
+      const peers = [...this.extra, ...others.map(([, state]) => state)];
       const frame: Frame = { hosting, host: hosting ? null : (this.states.get(host)?.host ?? null), peers };
       this.events.get(id)?.push(...session.update(FRAME_MS, this.inputs.get(id) ?? NO_INPUT, frame));
     }
@@ -383,6 +407,104 @@ describe('참가자', () => {
   });
 });
 
+describe('참가자가 보는 AI', () => {
+  /**
+   * ms 동안 진행하면서 참가자 화면의 AI 공이 방장 화면의 것에서 가장 멀어진 거리를 잽니다.
+   * 받은 위치를 속도×NET_LEAD만큼 앞으로 옮겨 맞추므로 그만큼은 빼고 셉니다.
+   */
+  function drift(made: Room, host: string, guest: string, ms: number): number {
+    let worst = 0;
+    for (let left = ms; left > 0; left -= FRAME_MS) {
+      made.run(FRAME_MS);
+      const lead = Math.abs(made.get(host).hostWire().bs.bot1.b.vx) * NET_LEAD;
+      const gap = Math.abs(ball(made.get(guest), 'bot1').x - ball(made.get(host), 'bot1').x);
+      worst = Math.max(worst, gap - lead);
+    }
+    return worst;
+  }
+
+  it('AI 공이 방장의 것을 따라간다', () => {
+    const made = room(['a', 'b'], { bots: 1 });
+    made.run(3000);
+    const a = made.get('a');
+    const b = made.get('b');
+    const startX = ball(a, 'bot1').x;
+    const worst = drift(made, 'a', 'b', 1600);
+    expect(ball(a, 'bot1').alive).toBe(true);
+    expect(ball(b, 'bot1').alive).toBe(true);
+    expect(Math.abs(ball(a, 'bot1').x - startX)).toBeGreaterThan(5);
+    expect(worst).toBeLessThan(0.75);
+  });
+
+  it('방장 쪽에서 AI가 탈락하면 out을 한 번 돌려준다', () => {
+    // 화살 모드에서 AI 둘이 있으면 라운드가 끝나기 전에 적어도 하나는 탈락한다.
+    const made = room(['a', 'b'], { bots: 2, mode: 'arrows' });
+    made.run(3000);
+    const a = made.get('a');
+    const b = made.get('b');
+    const dead = (): string | undefined => ['bot1', 'bot2'].find((id) => !ball(a, id).alive);
+    made.runUntil(() => dead() !== undefined, 95000);
+    const id = dead() ?? '';
+    made.run(300);
+    expect(ball(b, id).alive).toBe(false);
+    const seen = outs(made.events.get('b') ?? [], id);
+    expect(seen).toHaveLength(1);
+    expect(seen[0]).toMatchObject({ cause: 'fall' });
+  });
+
+  it('방장의 소식이 새로 오지 않으면 AI 공을 다시 맞추지 않는다', () => {
+    const made = room(['a', 'b'], { bots: 1 });
+    made.run(3000);
+    const a = made.get('a');
+    made.runUntil(() => a.hostWire().bs.bot1.i !== 0, 1000);
+    made.run(300);
+    made.freeze('a');
+    const received = made.states.get('a')?.host?.bs.bot1;
+    expect(received?.i).not.toBe(0);
+    made.run(600);
+    expect(Math.abs(ball(made.get('b'), 'bot1').x - (received?.b.x ?? NaN))).toBeGreaterThan(2);
+  });
+
+  it('경기 상태를 올린 사람이 둘이면 받은 상태를 올린 사람의 번호로 새 소식을 가린다', () => {
+    const made = room(['a', 'b'], { bots: 1 });
+    made.run(3000);
+    const a = made.get('a');
+    // 이미 물러난 방장의 마지막 상태가 방에 남아 있는 경우입니다. 번호는 더 오르지 않습니다.
+    const old = made.states.get('a');
+    if (!old?.host) throw new Error('방장의 상태가 없습니다.');
+    made.extra = [{ ...old, peer: 'z', ball: null, key: 0 }];
+    const startX = ball(a, 'bot1').x;
+    const worst = drift(made, 'a', 'b', 1600);
+    expect(Math.abs(ball(a, 'bot1').x - startX)).toBeGreaterThan(5);
+    expect(worst).toBeLessThan(0.75);
+  });
+
+  it('방장에서 물러나면 AI 공은 새 방장의 것을 따라간다', () => {
+    const made = room(['a', 'b'], { bots: 1 });
+    made.run(3500);
+    const a = made.get('a');
+    const b = made.get('b');
+    expect(a.hostWire().bs.bot1.i).not.toBe(0);
+    made.setHost('b');
+    made.run(200);
+    expect(b.match).toMatchObject({ game: 1, round: 1, phase: 'play' });
+    // a가 0.7초 멈춘 동안 새 방장의 AI는 계속 움직인다. 돌아온 a는 받은 상태로 AI 공을 옮긴다.
+    made.freeze('a');
+    const stale = ball(a, 'bot1').x;
+    made.run(700);
+    expect(Math.abs(ball(b, 'bot1').x - stale)).toBeGreaterThan(1);
+    made.thaw('a');
+    made.run(100);
+    expect(Math.abs(ball(a, 'bot1').x - ball(b, 'bot1').x)).toBeLessThan(0.5);
+    for (let ms = 0; ms < 1000; ms += FRAME_MS) {
+      made.run(FRAME_MS);
+      expect(a.hostWire().bs.bot1.i).toBe(0);
+    }
+    expect(a.match.phase).toBe('play');
+    expect(Math.abs(ball(a, 'bot1').x - ball(b, 'bot1').x)).toBeLessThan(1.5);
+  });
+});
+
 describe('play가 아닌 단계의 화살', () => {
   function shoots(events: WorldEvent[] | undefined): WorldEvent[] {
     return (events ?? []).filter((e) => e.type === 'shoot');
@@ -452,6 +574,45 @@ describe('방장', () => {
     expect(a.match.round).toBe(2);
     expect(a.match.phase).toBe('play');
     expect(a.match.scores).toEqual({ a: 1, b: 0 });
+  });
+
+  it('라운드 도중에 사라졌다가 돌아온 사람은 그 라운드에서는 탈락이고 다음 라운드에 다시 참가한다', () => {
+    const made = room(['a', 'b', 'c'], { mode: 'arrows' });
+    made.run(3200);
+    const a = made.get('a');
+    const b = made.get('b');
+    const c = made.get('c');
+    made.hide('b');
+    made.run(200);
+    made.show('b');
+    // b는 자기 화면에서는 살아 있어서 화살도 쏘지만, 방장과 다른 참가자에게는 이미 탈락한 사람이다.
+    made.inputs.set('b', press('special'));
+    made.run(500);
+    made.inputs.set('b', NO_INPUT);
+    made.run(200);
+    expect(made.states.get('b')).toMatchObject({ key: roundKey(1, 1), ball: { a: true } });
+    expect(b.view().arrows.filter((arrow) => arrow.owner === 'b')).toHaveLength(1);
+    expect(a.match.phase).toBe('play');
+    for (const id of ['a', 'c']) {
+      expect(ball(made.get(id), 'b')).toMatchObject({ alive: false, aim: null });
+      expect(made.get(id).view().arrows).toHaveLength(0);
+      expect(outs(made.events.get(id) ?? [], 'b')).toHaveLength(1);
+    }
+
+    // c는 가장 오른쪽에서 시작하므로 오른쪽으로 가면 아무도 밀지 않고 혼자 떨어진다.
+    made.inputs.set('c', press('right'));
+    made.runUntil(() => !ball(c, 'c').alive);
+    made.inputs.set('c', NO_INPUT);
+    made.run(200);
+    expect(ball(b, 'b').alive).toBe(true);
+    expect(a.match.phase).toBe('roundEnd');
+    expect(a.match.winner).toBe('a');
+    expect(a.match.scores).toEqual({ a: 1, b: 0, c: 0 });
+
+    made.run(2000 + 3000 + 200);
+    expect(a.match).toMatchObject({ round: 2, phase: 'play', roster: ['a', 'b', 'c'] });
+    expect(ball(a, 'b').alive).toBe(true);
+    expect(ball(c, 'b').alive).toBe(true);
   });
 
   it('방장이 나가면 남은 사람이 같은 점수표로 이어서 진행하고 AI를 맡는다', () => {

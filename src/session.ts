@@ -54,6 +54,8 @@ export class Session {
   private readonly botInputs = new Map<string, Input>();
   /** 사람마다 마지막으로 적용한 소식의 번호입니다. */
   private readonly seen = new Map<string, number>();
+  /** 이번 라운드 도중에 방에서 사라진 사람입니다. 다시 나타나도 다음 라운드까지는 탈락으로 봅니다. */
+  private readonly gone = new Set<string>();
   /** AI 공에 마지막으로 적용한 방장 소식의 번호입니다. */
   private hostSeen: number | null = null;
 
@@ -169,7 +171,7 @@ export class Session {
     if (!world) return [];
     return this.current.roster.filter((id) => {
       if (id === this.me || isBot(id)) return world.alive(id);
-      const peer = peers.find((p) => p.peer === id);
+      const peer = this.gone.has(id) ? undefined : peers.find((p) => p.peer === id);
       return peer !== undefined && (peer.key !== this.key || peer.ball?.a === true);
     });
   }
@@ -183,6 +185,7 @@ export class Session {
     this.acc = 0;
     this.input = NO_INPUT;
     this.seen.clear();
+    this.gone.clear();
     this.hostSeen = null;
     if (phase === 'lobby') {
       this.world = null;
@@ -216,9 +219,10 @@ export class Session {
   /** 받은 상태로 다른 사람의 공과 (방장이 아닐 때의) AI 공을 맞춥니다. */
   private applyRemote(world: World, frame: Frame, events: WorldEvent[]): void {
     for (const id of this.current.roster) {
-      if (id === this.me || isBot(id)) continue;
+      if (id === this.me || isBot(id) || this.gone.has(id)) continue;
       const peer = frame.peers.find((p) => p.peer === id);
       if (!peer) {
+        this.gone.add(id);
         this.eliminate(world, id, events);
       } else if (peer.key === this.key && peer.ball) {
         this.follow(world, id, peer.ball, peer.n !== this.seen.get(id), events);
@@ -226,7 +230,9 @@ export class Session {
       }
     }
     if (frame.hosting || !frame.host) return;
-    const n = frame.peers.find((p) => p.host !== null)?.n ?? -1;
+    // 방장이 바뀌는 동안에는 두 사람이 경기 상태를 올릴 수 있으므로, 받은 것과 같은 객체를 올린 사람을 먼저 찾습니다.
+    const sender = frame.peers.find((p) => p.host === frame.host) ?? frame.peers.find((p) => p.host !== null);
+    const n = sender?.n ?? -1;
     const fresh = n !== this.hostSeen;
     this.hostSeen = n;
     for (const id of this.current.roster) {
