@@ -117,8 +117,8 @@ const BRUISE_GAIN = 0.5;
 const STUN_CAP_MAX = 3;
 
 /** 라운드가 시작된 뒤 처음 화살을 모으기까지 기다리는 시간(초)의 범위입니다. */
-const FIRST_SHOT_MIN = 1.5;
-const FIRST_SHOT_MAX = 3;
+const FIRST_SHOT_MIN = 2.5;
+const FIRST_SHOT_MAX = 4;
 /** 쏜 뒤 다시 모으기까지 더 쉬는 시간(초)의 범위입니다. TUNING.arrowCooldown에 더합니다. */
 const ARROW_REST_MIN = 0.2;
 const ARROW_REST_MAX = 1;

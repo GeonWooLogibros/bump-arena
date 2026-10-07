@@ -518,7 +518,7 @@ describe('play가 아닌 단계의 화살', () => {
     a.start(['b']);
     expect(a.match.roster).toEqual(['b', 'bot1']);
     made.run(3000);
-    made.runUntil(() => (ball(a, 'bot1').aim?.charge ?? 0) >= 0.3, 2000);
+    made.runUntil(() => (ball(a, 'bot1').aim?.charge ?? 0) >= 0.3, 5000);
     expect(a.match.phase).toBe('play');
     expect(a.hostWire().bs.bot1.i & 16).toBe(16);
     const before = shoots(made.events.get('a')).length;

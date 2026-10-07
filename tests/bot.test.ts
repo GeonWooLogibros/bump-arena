@@ -216,15 +216,15 @@ describe('화살', () => {
     throw new Error('10초 안에 쏘지 않았습니다.');
   }
 
-  it('라운드가 시작되고 1.5~3초가 지나야 처음 모으기 시작하고, AI마다 그 시간이 다릅니다', () => {
+  it('라운드가 시작되고 2.5~4초가 지나야 처음 모으기 시작하고, AI마다 그 시간이 다릅니다', () => {
     const near = arrows({ others: [foe(20)] });
-    // 난수가 가장 작을 때 1.5초, 가장 클 때 3초입니다.
+    // 난수가 가장 작을 때 2.5초, 가장 클 때 4초입니다.
     const earliest = shoot(new Bot(() => 0), near).startedAt;
     const latest = shoot(new Bot(() => 0.999), near).startedAt;
-    expect(earliest).toBeGreaterThanOrEqual(1.5 - 1e-6);
-    expect(earliest).toBeLessThanOrEqual(1.5 + TICK);
-    expect(latest).toBeGreaterThanOrEqual(2.9);
-    expect(latest).toBeLessThanOrEqual(3 + TICK);
+    expect(earliest).toBeGreaterThanOrEqual(2.5 - 1e-6);
+    expect(earliest).toBeLessThanOrEqual(2.5 + TICK);
+    expect(latest).toBeGreaterThanOrEqual(3.9);
+    expect(latest).toBeLessThanOrEqual(4 + TICK);
   });
 
   it('0.4~0.9초 모아서 쏘고, 모으는 시간이 매번 다릅니다', () => {
