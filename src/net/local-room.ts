@@ -8,6 +8,7 @@ export function createLocalRoom(now: () => number = Date.now): NamedRoomLike {
   return {
     async presence(patch) {
       presence = { ...presence, ...patch };
+      for (const [field, value] of Object.entries(patch)) if (value === null) delete presence[field];
       updatedAt = now();
       for (const handler of [...handlers]) handler();
     },

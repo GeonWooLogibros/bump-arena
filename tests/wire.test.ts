@@ -45,12 +45,19 @@ describe('공 왕복', () => {
     });
   });
 
-  it('x가 문자열, NaN, Infinity이면 공 전체가 null입니다', () => {
-    for (const bad of ['1', NaN, Infinity]) {
-      const wire = json(encodeBall(ball())) as { b: unknown[] };
-      wire.b[0] = bad;
-      expect(decodeBall(json(wire))).toBeNull();
+  it('x가 문자열, null, NaN, Infinity이면 공 전체가 null입니다', () => {
+    for (const bad of ['1', null, NaN, Infinity, -Infinity]) {
+      for (const index of [0, 1, 2, 3, 4]) {
+        const wire = json(encodeBall(ball())) as { b: unknown[] };
+        wire.b[index] = bad;
+        expect(decodeBall(wire)).toBeNull();
+      }
     }
+  });
+
+  it('i는 0~31의 정수로 맞춥니다', () => {
+    const read = (i: unknown) => decodeBall({ ...(json(encodeBall(ball())) as object), i })?.i;
+    expect([read(99), read(-4), read(5.9), read('x'), read(NaN), read(17)]).toEqual([31, 0, 5, 0, 0, 17]);
   });
 
   it('화살 5000개가 와도 8개만 남습니다', () => {
@@ -118,6 +125,23 @@ describe('방장 상태 왕복', () => {
   });
 });
 
+describe('위험한 id', () => {
+  it('__proto__ 같은 키는 bs, scores, roster에 들어오지 못합니다', () => {
+    const text = JSON.stringify(json(encodeHost(host())))
+      .replace('"bs":{', '"bs":{"__proto__":' + JSON.stringify(encodeBall(ball())) + ',"constructor":' + JSON.stringify(encodeBall(ball())) + ',')
+      .replace('"scores":{', '"scores":{"__proto__":{"x":1},"prototype":9,')
+      .replace('"roster":[', '"roster":["__proto__",');
+    const decoded = decodeHost(JSON.parse(text));
+    expect(decoded).not.toBeNull();
+    expect(Object.keys(decoded!.bs)).toEqual(['bot1']);
+    expect(Object.keys(decoded!.scores)).toEqual(['a', 'bot1']);
+    expect(decoded!.roster).toEqual(['a', 'bot1']);
+    expect(Object.getPrototypeOf(decoded!.bs)).toBe(Object.prototype);
+    expect(Object.getPrototypeOf(decoded!.scores)).toBe(Object.prototype);
+    expect((decoded!.scores as Record<string, unknown>).x).toBeUndefined();
+  });
+});
+
 describe('readPeer', () => {
   it('빈 presence는 기본값입니다', () => {
     expect(readPeer('p', false, {})).toEqual({
@@ -128,7 +152,7 @@ describe('readPeer', () => {
   it('잘못된 값도 기본값으로 바꿉니다', () => {
     for (const color of [99, 'x', 1.5, -1]) expect(readPeer('p', false, { color }).color).toBe(0);
     expect(readPeer('p', false, { name: 5 }).name).toBe('플레이어');
-    expect(readPeer('p', false, { since: NaN }).since).toBe(0);
+    for (const since of [NaN, Infinity, -Infinity]) expect(readPeer('p', false, { since }).since).toBe(0);
     expect(readPeer('p', false, { ready: 'yes' }).ready).toBe(false);
   });
 

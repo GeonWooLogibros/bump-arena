@@ -15,6 +15,13 @@ describe('createLocalRoom', () => {
     expect(room.peers()[0].presence).toEqual({ a: 1, b: 2 });
   });
 
+  it('null 값은 해당 키를 지웁니다', async () => {
+    const room = createLocalRoom();
+    await room.presence({ a: 1, b: 2 });
+    await room.presence({ a: null });
+    expect(room.peers()[0].presence).toEqual({ b: 2 });
+  });
+
   it('onPeers 핸들러를 부르고 돌려받은 함수로 해제합니다', async () => {
     const room = createLocalRoom();
     const handler = vi.fn();

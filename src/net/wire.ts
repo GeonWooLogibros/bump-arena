@@ -11,6 +11,9 @@ export const MAX_SHOTS = 8;
 
 const PHASES: readonly Phase[] = ['lobby', 'countdown', 'play', 'roundEnd', 'matchEnd'];
 const ID_LIMIT = 64;
+/** 객체의 키로 쓰면 안 되는 id입니다. */
+const RESERVED_IDS = ['__proto__', 'constructor', 'prototype'];
+const INPUT_MAX = 31;
 const ROSTER_LIMIT = 12;
 const BOT_LIMIT = 5;
 const MAX_ROUND = 1_000_000;
@@ -80,7 +83,7 @@ function ranged(value: unknown, min: number, max: number, fallback: number): num
 }
 
 function validId(id: unknown): id is string {
-  return typeof id === 'string' && id.length > 0 && id.length <= ID_LIMIT;
+  return typeof id === 'string' && id.length > 0 && id.length <= ID_LIMIT && !RESERVED_IDS.includes(id);
 }
 
 /** 라운드마다 달라지는 열쇠입니다. */
@@ -114,7 +117,7 @@ export function encodeBall(ball: BallWire): Record<string, unknown> {
   const { b } = ball;
   return {
     b: [b.x, b.y, b.vx, b.vy, b.av].map(round2),
-    i: round2(ball.i),
+    i: ball.i,
     a: ball.a,
     rp: ball.rp ? ball.rp.map(round2) : null,
     am: ball.am ? ball.am.map(round2) : null,
@@ -137,7 +140,7 @@ export function decodeBall(value: unknown): BallWire | null {
   const arrows = Array.isArray(value.ar) ? value.ar.slice(0, MAX_SHOTS) : [];
   return {
     b: { x: px, y: py, vx: pvx, vy: pvy, av: pav },
-    i: limited(value.i, POS_LIMIT) ?? 0,
+    i: whole(value.i, INPUT_MAX),
     a: value.a === true,
     rp: rp ? [rp[0], rp[1]] : null,
     am: am ? [am[0], am[1], am[2]] : null,
