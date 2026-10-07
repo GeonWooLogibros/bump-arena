@@ -24,6 +24,9 @@ const PAD: readonly { key: Key; label: string; name: string }[] = [
   { key: 'right', label: '→', name: '오른쪽' },
 ];
 
+/** Cmd, Ctrl, Alt, Shift 키 자체의 code입니다. */
+const MODIFIER = /^(Meta|OS|Control|Alt|Shift)(Left|Right)$/;
+
 /** 지금 누르고 있는 키와 터치 버튼을 기억합니다. 화면 요소를 쓰지 않습니다. */
 export class InputState {
   /** 누르고 있는 키의 code입니다. */
@@ -31,14 +34,18 @@ export class InputState {
   /** 버튼마다 그 버튼을 누르고 있는 손가락(pointer id)입니다. */
   private readonly pointers = new Map<Key, Set<number>>();
 
-  /** 키를 눌렀을 때 부릅니다. 게임이 쓴 키이면 true를 돌려줍니다. modifier는 Cmd, Ctrl, Alt 가운데 하나를 함께 눌렀는지입니다. */
-  keyDown(code: string, modifier: boolean): boolean {
-    if (modifier) {
+  /**
+   * 키를 눌렀을 때 부릅니다. 게임이 쓴 키이면 true를 돌려줍니다.
+   * meta는 Cmd를, chord는 Ctrl이나 Alt를 함께 누르고 있는지입니다. 함께 누른 키는 브라우저의 단축키이므로 게임이 쓰지 않습니다.
+   */
+  keyDown(code: string, meta: boolean, chord = false): boolean {
+    if (MODIFIER.test(code)) return false;
+    if (meta) {
       // macOS는 Cmd와 함께 누른 키의 뗌을 알려 주지 않으므로, 누르고 있던 키를 모두 뗀 것으로 봅니다.
       this.codes.clear();
       return false;
     }
-    if (!(code in KEYS)) return false;
+    if (chord || !(code in KEYS)) return false;
     this.codes.add(code);
     return true;
   }
@@ -112,8 +119,10 @@ export function attachInput(root: HTMLElement): {
 
   window.addEventListener('keydown', (event) => {
     if (typing(event.target)) return;
-    if (!state.keyDown(event.code, event.metaKey || event.ctrlKey || event.altKey)) return;
-    // 방향키와 스페이스가 화면을 움직이거나 초점이 있는 버튼을 누르지 않게 합니다.
+    if (!state.keyDown(event.code, event.metaKey, event.ctrlKey || event.altKey)) return;
+    // Tab으로 초점을 옮긴 버튼은 스페이스로 누를 수 있어야 하므로 그대로 둡니다. 경기 중이 아니면 이 입력은 쓰이지 않습니다.
+    if (event.code === 'Space' && event.target instanceof HTMLButtonElement) return;
+    // 방향키와 스페이스가 화면을 움직이지 않게 합니다.
     event.preventDefault();
   });
   window.addEventListener('keyup', (event) => state.keyUp(event.code));

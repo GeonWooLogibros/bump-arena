@@ -31,12 +31,30 @@ describe('InputState 키보드', () => {
     expect(state.read().left).toBe(false);
   });
 
-  it('Cmd, Ctrl, Alt와 함께 누르면 누르고 있던 키를 모두 뗀다', () => {
+  it('Cmd와 함께 다른 키를 누르면 누르고 있던 키를 모두 뗀다', () => {
     const state = new InputState();
     state.keyDown('ArrowLeft', false);
     state.keyDown('Space', false);
     expect(state.keyDown('KeyA', true)).toBe(false);
     expect(state.read()).toEqual(NONE);
+  });
+
+  it('Cmd, Ctrl, Alt, Shift 키만 눌러서는 누르고 있던 키가 떼어지지 않는다', () => {
+    const state = new InputState();
+    state.keyDown('ArrowLeft', false);
+    state.keyDown('Space', false);
+    expect(state.keyDown('MetaLeft', true)).toBe(false);
+    expect(state.keyDown('ControlLeft', false, true)).toBe(false);
+    expect(state.keyDown('AltRight', false, true)).toBe(false);
+    expect(state.keyDown('ShiftLeft', false)).toBe(false);
+    expect(state.read()).toEqual({ ...NONE, left: true, special: true });
+  });
+
+  it('Ctrl이나 Alt와 함께 누른 키는 게임이 쓰지 않고, 누르고 있던 키는 그대로다', () => {
+    const state = new InputState();
+    state.keyDown('ArrowLeft', false);
+    expect(state.keyDown('KeyD', false, true)).toBe(false);
+    expect(state.read()).toEqual({ ...NONE, left: true });
   });
 
   it('reset은 키와 터치를 모두 뗀다', () => {

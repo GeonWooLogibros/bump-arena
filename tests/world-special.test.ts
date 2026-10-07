@@ -170,6 +170,41 @@ describe('화살 쏘기', () => {
   });
 });
 
+describe('화살 모드의 이동', () => {
+  it('모으는 동안에는 방향키를 눌러도 움직이지 않는다', () => {
+    const world = standing();
+    const x = world.state('a')!.x;
+    world.setInput('a', press('special', 'right'));
+    run(world, 30);
+    expect(world.aim('a')).not.toBeNull();
+    expect(Math.abs(world.state('a')!.x - x)).toBeLessThan(0.01);
+  });
+
+  it('쏜 뒤 모을 수 없는 1초 동안에는 special을 누르고 있어도 움직인다', () => {
+    const world = standing();
+    chargeAndRelease(world, 'a', 30);
+    const x = world.state('a')!.x;
+    world.setInput('a', press('special', 'right'));
+    run(world, 30);
+    expect(world.aim('a')).toBeNull();
+    expect(world.state('a')!.x).toBeGreaterThan(x + 1);
+  });
+
+  it('원격 공은 받은 겨누기가 있을 때만 멈춘다', () => {
+    const world = new World(FLAT, 'arrows');
+    world.addBall('r', 16, 11.9, false);
+    run(world, 120);
+    const x = world.state('r')!.x;
+    world.setInput('r', press('special', 'right'));
+    world.setAim('r', { dx: 1, dy: 0, charge: 0.5 });
+    run(world, 30);
+    expect(Math.abs(world.state('r')!.x - x)).toBeLessThan(0.01);
+    world.setAim('r', null);
+    run(world, 30);
+    expect(world.state('r')!.x).toBeGreaterThan(x + 1);
+  });
+});
+
 describe('화살 명중과 꽂힘', () => {
   it('local 공을 맞히면 탈락하고 화살은 사라진다', () => {
     const world = standing('arrows', [
@@ -228,6 +263,31 @@ describe('발판 안에서 쏘기', () => {
     expect(arrow.y).toBeLessThan(12.55);
     run(world, 200);
     expect(world.arrows()).toHaveLength(0);
+  });
+
+  it('바로 꽂힌 화살의 발사 정보는 표면에서 0.05m 앞이어서, 반올림해 받은 쪽에서도 같은 곳에 꽂힌다', () => {
+    const world = standing();
+    chargeAndRelease(world, 'a', 30, 'down');
+    const [arrow] = world.arrows();
+    const [shot] = world.shots('a');
+    expect(arrow.stuck).toBe(true);
+    expect(Math.hypot(arrow.x - shot.x, arrow.y - shot.y)).toBeCloseTo(0.05, 6);
+
+    // 보낼 때 소수 둘째 자리로 반올림하면서 발판 쪽으로 가장 많이(0.005m) 밀린 경우입니다.
+    const round2 = (value: number): number => Math.round(value * 100) / 100;
+    const received = {
+      ...shot,
+      x: round2(shot.x) + 0.005,
+      y: round2(shot.y) + 0.005,
+      vx: round2(shot.vx),
+      vy: round2(shot.vy),
+      age: 0.2,
+    };
+    const other = new World(FLAT, 'arrows');
+    other.syncShots('a', [received]);
+    const [seen] = other.arrows();
+    expect(seen.stuck).toBe(true);
+    expect(Math.hypot(seen.x - arrow.x, seen.y - arrow.y)).toBeLessThan(0.1);
   });
 });
 

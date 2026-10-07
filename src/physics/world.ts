@@ -116,8 +116,12 @@ const HIT_MIN = BASE_MASS * 3;
 /** 이 충격량에서 충돌 세기가 1이 됩니다. */
 const HIT_MAX = BASE_MASS * 20;
 
-/** 이 범위를 벗어난 local 공은 탈락합니다. */
-const BOUNDS = { left: -2, right: 34, bottom: 20 };
+/** 이 범위를 벗어난 local 공은 탈락합니다. 화면에서 boundsMargin만큼 더 나간 곳입니다. */
+const BOUNDS = {
+  left: -TUNING.boundsMargin,
+  right: TUNING.viewW + TUNING.boundsMargin,
+  bottom: TUNING.viewH + TUNING.boundsMargin,
+};
 
 /** 발판 도형을 정적 물체의 fixture로 붙입니다. */
 function addShape(ground: Body, shape: Shape): void {
@@ -375,7 +379,8 @@ export class World {
       if (this.mode === 'grapple') this.driveRope(id, entry, events);
       if (this.mode === 'arrows') this.driveArrow(id, entry, events);
     }
-    if (this.mode === 'arrows' && input.special) return;
+    // 화살을 모으는 동안에는 방향키가 겨누는 데 쓰이므로 움직이지 않습니다. 쏜 직후처럼 모을 수 없을 때는 움직입니다.
+    if (this.mode === 'arrows' && entry.aim) return;
     const push = BASE_MASS * TUNING.accel;
     const fx = (input.right ? push : 0) - (input.left ? push : 0);
     const fy = input.down ? push : 0;

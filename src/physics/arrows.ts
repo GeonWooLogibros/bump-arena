@@ -59,6 +59,9 @@ export function arrowSpeed(charge: number): number {
   return TUNING.arrowMinSpeed + (TUNING.arrowMaxSpeed - TUNING.arrowMinSpeed) * ratio;
 }
 
+/** 발판에 바로 꽂힌 화살의 발사 정보를 표면에서 이만큼(m) 앞에 둡니다. 보낼 때의 반올림(0.01m)보다 넉넉해야 합니다. */
+const STUCK_GAP = 0.05;
+
 /** 부동소수점 누적 오차 때문에 시간 비교가 한 step 어긋나는 일을 막습니다. */
 const EPS = 1e-9;
 
@@ -82,12 +85,12 @@ export class Arrows {
       this.list.push(this.create(owner, { id, x, y, vx, vy, age: 0 }));
       return false;
     }
-    // 받는 쪽이 같은 발판에 꽂히도록 발사 정보는 표면 바로 앞(0.01m)에 둡니다.
+    // 받는 쪽이 같은 발판에 꽂히도록 발사 정보는 표면 바로 앞에 둡니다.
     const speed = Math.hypot(vx, vy);
     const arrow = this.create(owner, {
       id,
-      x: wall[0] - (vx / speed) * 0.01,
-      y: wall[1] - (vy / speed) * 0.01,
+      x: wall[0] - (vx / speed) * STUCK_GAP,
+      y: wall[1] - (vy / speed) * STUCK_GAP,
       vx,
       vy,
       age: 0,

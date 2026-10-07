@@ -20,7 +20,7 @@ import type { MenuView } from './ui/menus';
 /** 초대 링크를 복사한 결과를 보여 주는 시간(밀리초). */
 const COPIED_MS = 2000;
 /** 터치 화면의 특수 동작 버튼에 쓰는 글자입니다. */
-const SPECIAL_LABEL: Record<Mode, string> = { classic: '무겁게', grapple: '줄', arrows: '화살' };
+const SPECIAL_LABEL: Record<Mode, string> = { classic: '무거워지기', grapple: '줄', arrows: '화살' };
 
 const app = document.querySelector<HTMLDivElement>('#app');
 if (!app) throw new Error('#app이 없습니다.');
@@ -86,9 +86,12 @@ if (import.meta.env.DEV) {
   });
 }
 
-// 브라우저는 사용자가 누른 뒤에만 소리를 낼 수 있습니다.
-window.addEventListener('pointerdown', () => audio.unlock());
-window.addEventListener('keydown', () => audio.unlock());
+// 브라우저는 사용자가 누른 뒤에만 소리를 낼 수 있습니다. iOS Safari는 터치의 pointerdown을 누른 것으로 치지 않습니다.
+for (const type of ['pointerdown', 'pointerup', 'click', 'keydown'] as const) {
+  window.addEventListener(type, () => audio.unlock());
+}
+// 가려진 화면은 브라우저가 멈추므로, 경기 중이면 방장을 다음 사람에게 넘깁니다.
+document.addEventListener('visibilitychange', () => mp.setVisible(!document.hidden));
 app.addEventListener('click', (event) => {
   if (event.target instanceof Element && event.target.closest('.menus button')) audio.play('click', 0.5);
 });
@@ -226,22 +229,27 @@ function resize(): void {
 let last = performance.now();
 
 function frame(time: number): void {
+  // 한 프레임에서 오류가 나도 게임이 멈추지 않게 다음 프레임을 먼저 예약합니다.
+  requestAnimationFrame(frame);
   const elapsed = Math.max(0, time - last);
   last = time;
-  resize();
-  adopt();
+  try {
+    resize();
+    adopt();
 
-  const events = mp.update(elapsed, input.read());
-  const view = mp.stage === 'game' ? (mp.session?.view() ?? null) : null;
-  const players = mp.players();
-  react(events, view, players);
-  effects.update(Math.min(elapsed, 100) / 1000);
+    const events = mp.update(elapsed, input.read());
+    const view = mp.stage === 'game' ? (mp.session?.view() ?? null) : null;
+    const players = mp.players();
+    react(events, view, players);
+    effects.update(Math.min(elapsed, 100) / 1000);
 
-  const playing = view !== null && !view.watching && view.match.phase !== 'matchEnd';
-  input.setTouchVisible(playing, view ? SPECIAL_LABEL[view.match.settings.mode] : '');
-  drawScene(ctx, { width, height, view, players, effects, time });
-  menus.show(menuView(time, view, players));
-  requestAnimationFrame(frame);
+    const playing = view !== null && !view.watching && view.match.phase !== 'matchEnd';
+    input.setTouchVisible(playing, view ? SPECIAL_LABEL[view.match.settings.mode] : '');
+    drawScene(ctx, { width, height, view, players, effects, time });
+    menus.show(menuView(time, view, players));
+  } catch (error) {
+    console.error(error);
+  }
 }
 
 requestAnimationFrame(frame);
