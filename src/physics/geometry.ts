@@ -30,7 +30,7 @@ function edges(points: Point[]): [Point, Point][] {
 }
 
 /** 선분 a→b 위에서 (x, y)와 가장 가까운 점입니다. */
-function nearestOnSegment(a: Point, b: Point, x: number, y: number): Point {
+export function nearestOnSegment(a: Point, b: Point, x: number, y: number): Point {
   const dx = b[0] - a[0];
   const dy = b[1] - a[1];
   const len2 = dx * dx + dy * dy;
