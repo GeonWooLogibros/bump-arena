@@ -272,6 +272,48 @@ describe('받은 화살 맞추기', () => {
   });
 });
 
+describe('받은 화살 뒤에 이어서 쏘기', () => {
+  it('원격이던 공을 맡아서 쏘면 받은 화살보다 큰 번호를 쓴다', () => {
+    const world = new World(FLAT, 'arrows');
+    world.addBall('bot1', 16, 11.9, false);
+    run(world, 120);
+    world.syncShots('bot1', [{ id: 3, x: 16, y: 5, vx: 0, vy: -1, age: 0 }]);
+    world.setLocal('bot1', true);
+    expect(ofType(chargeAndRelease(world, 'bot1', 30), 'shoot')).toHaveLength(1);
+    const ids = world.shots('bot1').map((s) => s.id);
+    expect(ids).toHaveLength(2);
+    expect(Math.max(...ids)).toBeGreaterThan(3);
+  });
+
+  it('받은 화살이 이미 사라졌어도 그 번호를 다시 쓰지 않는다', () => {
+    const world = new World(FLAT, 'arrows');
+    world.addBall('bot1', 16, 11.9, false);
+    run(world, 120);
+    world.syncShots('bot1', [{ id: 3, x: 16, y: 5, vx: 0, vy: -1, age: 0 }]);
+    world.syncShots('bot1', []);
+    world.setLocal('bot1', true);
+    chargeAndRelease(world, 'bot1', 30);
+    const ids = world.shots('bot1').map((s) => s.id);
+    expect(ids).toHaveLength(1);
+    expect(ids[0]).toBeGreaterThan(3);
+  });
+});
+
+describe('모으기 취소', () => {
+  it('취소한 뒤에 떼면 쏘지 않고, 다시 모으면 바로 쏠 수 있다', () => {
+    const world = standing();
+    world.setInput('a', press('special'));
+    run(world, 30);
+    expect(world.aim('a')).not.toBeNull();
+    world.cancelCharge('a');
+    expect(world.aim('a')).toBeNull();
+    world.setInput('a', NO_INPUT);
+    expect(ofType(run(world, 1), 'shoot')).toHaveLength(0);
+    expect(world.arrows()).toHaveLength(0);
+    expect(ofType(chargeAndRelease(world, 'a', 30), 'shoot')).toHaveLength(1);
+  });
+});
+
 describe('원격 공 맞추기', () => {
   const rest = { vx: 0, vy: 0, av: 0 };
 

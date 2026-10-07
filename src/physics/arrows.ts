@@ -116,6 +116,8 @@ export class Arrows {
    */
   sync(owner: string, shots: readonly ArrowShot[], targets: readonly Target[]): string[] {
     const keep = new Set(shots.map((s) => s.id));
+    // 이 주인의 공을 나중에 여기서 맡아 쏘더라도 받은 번호와 겹치지 않게 합니다.
+    this.nextId.set(owner, Math.max(this.nextId.get(owner) ?? 0, ...keep));
     for (let i = this.list.length - 1; i >= 0; i--) {
       const a = this.list[i];
       if (a.owner === owner && !keep.has(a.shot.id)) this.list.splice(i, 1);

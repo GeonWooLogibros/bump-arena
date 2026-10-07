@@ -315,6 +315,14 @@ export class World {
     if (entry) entry.aim = aim && { ...aim };
   }
 
+  /** 모으던 힘을 버립니다. 그 뒤에 special을 떼도 화살이 나가지 않습니다. */
+  cancelCharge(id: string): void {
+    const entry = this.entries.get(id);
+    if (!entry) return;
+    entry.charge = 0;
+    entry.aim = null;
+  }
+
   /** owner가 쏜 화살 가운데 아직 남아 있는 것의 발사 정보입니다. */
   shots(owner: string): ArrowShot[] {
     return this.arrowList.shots(owner);

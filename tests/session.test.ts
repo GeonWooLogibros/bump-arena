@@ -383,6 +383,53 @@ describe('참가자', () => {
   });
 });
 
+describe('play가 아닌 단계의 화살', () => {
+  function shoots(events: WorldEvent[] | undefined): WorldEvent[] {
+    return (events ?? []).filter((e) => e.type === 'shoot');
+  }
+
+  it('AI가 모으던 중에 라운드가 끝나면 쏘지 않고, 결과를 보여 주는 동안 새로 쏘지도 않는다', () => {
+    // 방장 a는 구경하고 b와 AI가 겨룬다. b가 방에서 나가면 그 순간 라운드가 끝난다.
+    const made = new Room(['a', 'b']);
+    const a = made.get('a');
+    a.setSettings({ bots: 1, mapSetting: 0, mode: 'arrows' });
+    a.start(['b']);
+    expect(a.match.roster).toEqual(['b', 'bot1']);
+    made.run(3000);
+    made.runUntil(() => (ball(a, 'bot1').aim?.charge ?? 0) >= 0.3, 2000);
+    expect(a.match.phase).toBe('play');
+    expect(a.hostWire().bs.bot1.i & 16).toBe(16);
+    const before = shoots(made.events.get('a')).length;
+
+    made.leave('b');
+    made.run(FRAME_MS);
+    expect(a.match.phase).toBe('roundEnd');
+    expect(a.match.winner).toBe('bot1');
+    for (let ms = 0; ms < 1900; ms += FRAME_MS) {
+      made.run(FRAME_MS);
+      expect(a.match.phase).toBe('roundEnd');
+      expect(a.hostWire().bs.bot1.i).toBe(0);
+      expect(ball(a, 'bot1').aim).toBeNull();
+    }
+    expect(shoots(made.events.get('a'))).toHaveLength(before);
+    expect(a.view().arrows.filter((arrow) => arrow.owner === 'bot1')).toHaveLength(0);
+  });
+
+  it('내가 모으던 중에 라운드가 끝나면 쏘지 않는다', () => {
+    const made = room(['a', 'b'], { mode: 'arrows' });
+    const a = made.get('a');
+    made.run(3000);
+    made.inputs.set('a', press('special'));
+    made.runUntil(() => (ball(a, 'a').aim?.charge ?? 0) >= 0.3, 2000);
+    made.leave('b');
+    made.run(2000);
+    expect(a.match.winner).toBe('a');
+    expect(shoots(made.events.get('a'))).toHaveLength(0);
+    expect(a.view().arrows).toHaveLength(0);
+    expect(a.mine().ball).toMatchObject({ i: 0, am: null, ar: [] });
+  });
+});
+
 describe('방장', () => {
   it('다른 사람이 탈락했다고 올리면 라운드를 끝내고, 지난 라운드의 상태는 생존으로 본다', () => {
     const made = room(['a', 'b']);

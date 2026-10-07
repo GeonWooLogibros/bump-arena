@@ -112,6 +112,7 @@ export class Session {
     const { phase } = this.current;
     this.input = phase === 'play' ? { ...input } : NO_INPUT;
     world.setInput(this.me, this.input);
+    if (phase !== 'play') this.rest(world);
     if (phase === 'countdown') {
       this.acc = 0;
       return events;
@@ -119,7 +120,7 @@ export class Session {
     this.acc += dt / 1000;
     for (let steps = 0; steps < MAX_STEPS && this.acc >= TUNING.step; steps++) {
       this.acc -= TUNING.step;
-      this.think(world);
+      if (phase === 'play') this.think(world);
       events.push(...world.step());
     }
     if (this.acc >= TUNING.step) this.acc = 0;
@@ -255,6 +256,16 @@ export class Session {
     if (!at) return;
     world.kill(id);
     events.push({ type: 'out', id, x: at.x, y: at.y, cause: 'fall' });
+  }
+
+  /** play가 아닐 때 나와 AI의 조작을 멈춥니다. 모으던 화살은 쏘지 않고 버립니다. */
+  private rest(world: World): void {
+    world.cancelCharge(this.me);
+    for (const id of this.bots.keys()) {
+      this.botInputs.set(id, NO_INPUT);
+      world.setInput(id, NO_INPUT);
+      world.cancelCharge(id);
+    }
   }
 
   /** 생존한 AI마다 이번 step의 입력을 정합니다. */
