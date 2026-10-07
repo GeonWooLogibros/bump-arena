@@ -1,4 +1,5 @@
 /** 대기실 규칙. 방 코드, 이름, 색, 자리 순서, 방장 정하기를 맡습니다. */
+import type { Match } from './round';
 
 const CODE_ALPHABET = 'abcdefghjkmnpqrstuvwxyz23456789';
 const ROOM_CODE_LENGTH = 5;
@@ -56,10 +57,14 @@ export interface Seat {
   progress?: number;
 }
 
-/** 경기가 진행된 정도를 숫자 하나로 만듭니다. 경기 번호, 라운드, 점수 합의 순서로 비교됩니다. */
-export function matchProgress(match: { game: number; round: number; scores: Record<string, number> }): number {
+/**
+ * 경기가 진행된 정도를 숫자 하나로 만듭니다. 경기 번호, 라운드, 점수 합의 순서로 비교됩니다.
+ * 대기실은 그 경기를 마치고 돌아온 상태이므로, 같은 경기 번호의 어떤 경기 중 상태보다 앞선 것으로 봅니다.
+ */
+export function matchProgress(match: Pick<Match, 'game' | 'phase' | 'round' | 'scores'>): number {
+  if (match.phase === 'lobby') return match.game * 100000 + 99999;
   const total = Object.values(match.scores).reduce((sum, score) => sum + score, 0);
-  return match.game * 100000 + match.round * 100 + Math.min(99, total);
+  return match.game * 100000 + Math.min(999, match.round) * 100 + Math.min(99, total);
 }
 
 /** 방에 들어온 순서(since, 같으면 peer 사전순)로 늘어놓습니다. */

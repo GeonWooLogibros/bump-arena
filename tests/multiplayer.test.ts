@@ -4,6 +4,7 @@ import type { Stage } from '../src/multiplayer';
 import type { LobbyLike, NamedRoomLike, PeerLike } from '../src/net/types';
 import { NO_INPUT } from '../src/physics/world';
 import type { BallView, Input, WorldEvent } from '../src/physics/world';
+import type { Settings } from '../src/game/round';
 import type { Frame } from '../src/session';
 
 const FRAME_MS = 16;
@@ -185,6 +186,18 @@ describe('연습하기', () => {
     expect(c.mp.lobbyView()?.rows).toHaveLength(6);
     c.mp.setSettings({ mode: 'arrows', target: 3 });
     expect(c.mp.lobbyView()?.settings).toMatchObject({ mode: 'arrows', target: 3, bots: 5 });
+  });
+
+  it('잘못된 설정 값은 무시하고 AI 수는 정수로 바꾼다', () => {
+    const c = practice();
+    c.mp.setSettings({ mode: 'grapple', target: 7, mapSetting: 2, bots: 3 });
+    const wrong = { mode: 'laser', target: 4, mapSetting: 9, bots: NaN } as unknown as Partial<Settings>;
+    c.mp.setSettings(wrong);
+    c.mp.setSettings({ mapSetting: 1.5, bots: Infinity });
+    expect(c.mp.lobbyView()?.settings).toEqual({ mode: 'grapple', target: 7, mapSetting: 2, bots: 3 });
+    c.mp.setSettings({ bots: 2.7, mapSetting: -1 });
+    expect(c.mp.lobbyView()?.settings).toEqual({ mode: 'grapple', target: 7, mapSetting: -1, bots: 2 });
+    expect(c.mp.lobbyView()?.rows.map((row) => row.id)).toEqual(['me', 'bot1', 'bot2']);
   });
 
   it('경기를 진행하면 카운트다운 뒤에 내 공이 움직이고 대기실로 돌아올 수 있다', () => {
@@ -623,6 +636,42 @@ describe('멈췄다가 돌아온 방장', () => {
       expect(c.mp.stage).toBe('game');
       expect(c.mp.session?.match).toMatchObject({ game: 1, round, scores });
     }
+  });
+});
+
+describe('멈춘 방장이 방에 남아 있는 대기실', () => {
+  it('새 방장이 대기실로 돌아가면 대기실에 머물고, 거기서 새 경기를 시작할 수 있다', async () => {
+    const hub = new FakeHub();
+    const [host, guest] = await room(hub, 1);
+    host.mp.setSettings({ mapSetting: 0 });
+    host.mp.toggleReady();
+    guest.mp.toggleReady();
+    pass(hub, 100, host, guest);
+    host.mp.start();
+    pass(hub, 100, host, guest);
+
+    pass(hub, GONE_MS + 1000, guest);
+    expect(guest.mp.isHost()).toBe(true);
+    guest.mp.backToLobby();
+    pass(hub, 100, guest);
+    expect(guest.mp.stage).toBe('lobby');
+    expect(guest.mp.isHost()).toBe(true);
+    expect(guest.mp.session?.match).toMatchObject({ phase: 'lobby', game: 1 });
+    expect(guest.mp.lobbyView()?.rows.map((row) => [row.id, row.host])).toEqual([
+      ['p0', false],
+      ['p1', true],
+      ['bot1', false],
+    ]);
+    pass(hub, GONE_MS + 1000, guest);
+    expect(guest.mp.stage).toBe('lobby');
+    expect(guest.stages).toEqual(['joining', 'lobby', 'game', 'lobby']);
+
+    expect(guest.mp.lobbyView()?.canStart).toBe(true);
+    guest.mp.start();
+    pass(hub, 500, guest);
+    expect(guest.mp.stage).toBe('game');
+    expect(guest.mp.isHost()).toBe(true);
+    expect(guest.mp.session?.match).toMatchObject({ phase: 'countdown', game: 2, round: 1 });
   });
 });
 

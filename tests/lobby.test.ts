@@ -11,6 +11,7 @@ import {
   seatOrder,
 } from '../src/game/lobby';
 import type { Seat } from '../src/game/lobby';
+import type { Phase } from '../src/game/round';
 
 const seat = (peer: string, since: number, color = 0, hosting = false): Seat => ({ peer, since, color, hosting });
 
@@ -78,9 +79,13 @@ describe('pickHost', () => {
 });
 
 describe('matchProgress', () => {
-  const match = (game: number, round: number, scores: Record<string, number> = {}) => ({ game, round, scores });
+  const match = (game: number, round: number, scores: Record<string, number> = {}, phase: Phase = 'play') => ({
+    game,
+    round,
+    scores,
+    phase,
+  });
   it('경기 번호, 라운드, 점수 합의 순서로 커집니다', () => {
-    expect(matchProgress(match(0, 0))).toBe(0);
     expect(matchProgress(match(1, 2, { a: 1, b: 2 }))).toBe(100203);
     expect(matchProgress(match(2, 1))).toBeGreaterThan(matchProgress(match(1, 9, { a: 7, b: 6 })));
     expect(matchProgress(match(1, 3))).toBeGreaterThan(matchProgress(match(1, 2, { a: 7, b: 7, c: 7 })));
@@ -88,6 +93,19 @@ describe('matchProgress', () => {
   });
   it('점수 합은 99까지만 셉니다', () => {
     expect(matchProgress(match(1, 1, { a: 99, b: 99 }))).toBe(100199);
+  });
+  it('라운드는 999까지만 세어서 다음 경기를 넘지 않습니다', () => {
+    expect(matchProgress(match(1, 5000))).toBe(199900);
+    expect(matchProgress(match(2, 1, {}, 'countdown'))).toBeGreaterThan(matchProgress(match(1, 5000, { a: 99 })));
+  });
+  it('대기실은 같은 경기 번호의 어떤 경기 중 상태보다 앞서고 다음 경기보다는 뒤입니다', () => {
+    const lobby = matchProgress(match(1, 0, {}, 'lobby'));
+    expect(matchProgress(match(0, 0, {}, 'lobby'))).toBe(99999);
+    expect(lobby).toBe(199999);
+    for (const phase of ['countdown', 'play', 'roundEnd', 'matchEnd'] as const) {
+      expect(lobby).toBeGreaterThan(matchProgress(match(1, 9, { a: 7, b: 6 }, phase)));
+    }
+    expect(matchProgress(match(2, 1, {}, 'countdown'))).toBeGreaterThan(lobby);
   });
 });
 

@@ -12,6 +12,8 @@ import {
   roomName,
   seatOrder,
 } from './game/lobby';
+import { MAPS, RANDOM_MAP } from './game/maps';
+import { TARGETS, readMode } from './game/modes';
 import { DEFAULT_SETTINGS, botIds, isBot } from './game/round';
 import type { Settings } from './game/round';
 import { createLocalRoom } from './net/local-room';
@@ -28,8 +30,10 @@ export const SETTLE_MS = 2000;
 /** 경기 중에 상대의 소식이 이만큼 끊기면 나간 것으로 봅니다(밀리초). 대기실에서는 쓰지 않습니다. */
 export const GONE_MS = 10000;
 
+/** 화면이 보여 줄 단계입니다. 처음 화면, 방에 들어가는 중, 대기실, 경기입니다. */
 export type Stage = 'idle' | 'joining' | 'lobby' | 'game';
 
+/** 대기실 참가자 목록의 한 줄입니다. AI도 한 줄을 차지하며 항상 준비된 것으로 표시합니다. */
 export interface LobbyRow {
   id: string;
   name: string;
@@ -40,6 +44,7 @@ export interface LobbyRow {
   bot: boolean;
 }
 
+/** 대기실 화면에 보여 줄 내용입니다. */
 export interface LobbyView {
   practice: boolean;
   code: string;
@@ -48,16 +53,17 @@ export interface LobbyView {
   isHost: boolean;
   ready: boolean;
   canStart: boolean;
-  /** 방에 들어온 직후의 기다림이 끝났는지 여부. */
+  /** 방에 들어온 직후의 기다림이 끝났는지 여부입니다. */
   settled: boolean;
   settings: Settings;
   myColor: number;
-  /** 다른 사람이 쓰고 있어서 고를 수 없는 색 번호. */
+  /** 다른 사람이 쓰고 있어서 고를 수 없는 색 번호입니다. */
   takenColors: number[];
-  /** AI를 더 넣을 수 있는 최대 수(6 − 사람 수). */
+  /** AI를 넣을 수 있는 최대 수(6 − 사람 수)입니다. */
   maxBots: number;
 }
 
+/** 점수표와 이름표에 쓸 참가자 한 명(사람 또는 AI)의 정보입니다. */
 export interface PlayerInfo {
   id: string;
   name: string;
@@ -66,22 +72,23 @@ export interface PlayerInfo {
   bot: boolean;
 }
 
+/** Multiplayer가 화면에 알리는 일입니다. onStage는 단계가 바뀔 때마다 부릅니다. */
 export interface MultiplayerHooks {
   onStage(stage: Stage): void;
 }
 
 /** 한 번 읽은 방의 모습입니다. */
 interface Scan {
-  /** 자리 순서로 앞에서 6명까지의 사람. */
+  /** 자리 순서로 앞에서 6명까지의 사람입니다. */
   humans: PeerState[];
   mine: PeerState | null;
-  /** 방에 있는 사람 전체의 수. */
+  /** 방에 있는 사람 전체의 수입니다. */
   count: number;
-  /** 내가 앞에서 6명 안에 드는지 여부. */
+  /** 내가 앞에서 6명 안에 드는지 여부입니다. */
   seated: boolean;
-  /** 방장으로 행동하는 사람. 아직 모르면 null. */
+  /** 방장으로 행동하는 사람입니다. 아직 모르면 null입니다. */
   host: PeerState | null;
-  /** 내가 방장으로 행동하는지 여부. */
+  /** 내가 방장으로 행동하는지 여부입니다. */
   hosting: boolean;
 }
 
@@ -102,17 +109,19 @@ export class Multiplayer {
   private color = 0;
   private ready = false;
   private joinedAt = 0;
-  /** stage가 game이 된 시각. 대기실에서는 아무도 보내지 않으므로 소식이 끊긴 시간은 이때부터 셉니다. */
+  /** stage가 game이 된 시각입니다. 대기실에서는 아무도 보내지 않으므로 소식이 끊긴 시간은 이때부터 셉니다. */
   private gameSince = 0;
-  /** 방에 들어온 직후에 한 번만 하는 확인(빈 방, 가득 찬 방)을 마쳤는지 여부. */
+  /** 방에 들어온 직후에 한 번만 하는 확인(빈 방, 가득 찬 방)을 마쳤는지 여부입니다. */
   private arrived = false;
-  /** 보낼 때마다 올리는 번호. */
+  /** 마지막으로 방을 읽었을 때 내가 방장으로 행동하고 있었는지 여부입니다. */
+  private acting = false;
+  /** 보낼 때마다 올리는 번호입니다. */
   private n = 0;
   private lastSent = 0;
   private sentAlive = false;
-  /** 대기실에서 마지막으로 보낸 방장 정보. 마지막으로 보낸 것이 경기 중의 상태이면 null입니다. */
+  /** 대기실에서 마지막으로 보낸 방장 정보입니다. 마지막으로 보낸 것이 경기 중의 상태이면 null입니다. */
   private sentLobby: string | null = null;
-  /** 방에 들어가는 시도마다 올리는 번호. 기다리는 사이에 나가기를 눌렀는지 알아냅니다. */
+  /** 방에 들어가는 시도마다 올리는 번호입니다. 기다리는 사이에 나가기를 눌렀는지 알아냅니다. */
   private attempt = 0;
 
   constructor(
@@ -123,7 +132,7 @@ export class Multiplayer {
     private readonly random: () => number = Math.random,
   ) {}
 
-  /** 지금 방의 경기. 방이 붙여 준 내 id를 알기 전에는 null입니다. */
+  /** 지금 방의 경기입니다. 방이 붙여 준 내 id를 알기 전에는 null입니다. */
   get session(): Session | null {
     return this.current;
   }
@@ -143,7 +152,7 @@ export class Multiplayer {
     return this.enter(code, name, color, false);
   }
 
-  /** 연습하기: 나만 있는 방에 들어간다. 통신이 없어도 된다. */
+  /** 연습하기입니다. 나만 있는 방에 들어가며, 통신이 없어도 됩니다. */
   practice(name: string, color: number): void {
     if (this.stage !== 'idle') return;
     this.attempt++;
@@ -180,13 +189,21 @@ export class Multiplayer {
     this.patch({ color });
   }
 
-  /** 방장이 대기실에서 설정을 바꿉니다. 방장이 아니면 아무 일도 하지 않습니다. */
+  /** 방장이 대기실에서 설정을 바꿉니다. 방장이 아니면 아무 일도 하지 않고, 쓸 수 없는 값은 무시합니다. */
   setSettings(patch: Partial<Settings>): void {
     const session = this.current;
     if (this.stage !== 'lobby' || !session) return;
     const { hosting, humans } = this.scan();
     if (!hosting) return;
-    session.setSettings(patch);
+    const { mode, target, mapSetting, bots } = patch;
+    const clean: Partial<Settings> = {};
+    if (mode !== undefined && readMode(mode) === mode) clean.mode = mode;
+    if (target !== undefined && TARGETS.some((t) => t === target)) clean.target = target;
+    if (Number.isInteger(mapSetting) && mapSetting! >= RANDOM_MAP && mapSetting! < MAPS.length) {
+      clean.mapSetting = mapSetting;
+    }
+    if (typeof bots === 'number' && Number.isFinite(bots)) clean.bots = Math.floor(bots);
+    session.setSettings(clean);
     session.setSettings({ bots: this.botCount(humans.length) });
   }
 
@@ -207,7 +224,7 @@ export class Multiplayer {
     this.follow();
   }
 
-  /** 매 프레임. 방을 읽고, Session을 진행하고, 내 상태를 보낸다. */
+  /** 매 프레임 부릅니다. 방을 읽고, Session을 진행하고, 내 상태를 보낸 뒤 그동안 일어난 일을 돌려줍니다. */
   update(dtMs: number, input: Input): WorldEvent[] {
     if (!this.room || (this.stage !== 'lobby' && this.stage !== 'game')) return [];
     const scan = this.scan();
@@ -275,7 +292,7 @@ export class Multiplayer {
     };
   }
 
-  /** 점수표와 이름표에 쓸 참가자 정보(사람과 AI). */
+  /** 점수표와 이름표에 쓸 참가자 정보(사람과 AI)입니다. */
   players(): PlayerInfo[] {
     return this.room ? this.infos(this.scan()) : [];
   }
@@ -330,6 +347,7 @@ export class Multiplayer {
     this.ready = false;
     this.joinedAt = this.now();
     this.arrived = false;
+    this.acting = false;
     this.n = 0;
     this.lastSent = 0;
     this.sentAlive = false;
@@ -392,9 +410,15 @@ export class Multiplayer {
     const humans = seatOrder(all).slice(0, MAX_PLAYERS);
     const seated = mine !== null && humans.includes(mine);
     // 멈췄다가 돌아온 예전 방장이 경기를 되돌리지 않도록, 더 많이 진행된 경기를 올리는 사람을 방장으로 봅니다.
-    const seats = humans.map((p) => ({ ...p, hosting: p.host !== null, progress: p.host ? matchProgress(p.host) : 0 }));
+    // 내가 방장으로 행동하는 중이면, 방에 늦게 보이는 내 방장 정보가 아니라 지금 내 경기 상태로 견줍니다.
+    const live = this.acting && this.current ? matchProgress(this.current.match) : null;
+    const seats = humans.map((p) => {
+      if (p.me && live !== null) return { ...p, hosting: true, progress: live };
+      return { ...p, hosting: p.host !== null, progress: p.host ? matchProgress(p.host) : 0 };
+    });
     const picked = pickHost(seats);
     const hosting = mine !== null && picked === mine.peer && this.settled();
+    this.acting = hosting;
     const host = hosting ? mine : (humans.find((p) => p.peer === picked && !p.me) ?? null);
     return { humans, mine, count: all.length, seated, host, hosting };
   }
