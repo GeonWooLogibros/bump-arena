@@ -217,6 +217,20 @@ describe('화살 명중과 꽂힘', () => {
   });
 });
 
+describe('발판 안에서 쏘기', () => {
+  it('발판 위에서 아래로 쏘면 표면에 바로 꽂힌다', () => {
+    const world = standing();
+    const events = chargeAndRelease(world, 'a', 30, 'down');
+    expect(ofType(events, 'stick')).toHaveLength(1);
+    const [arrow] = world.arrows();
+    expect(arrow.stuck).toBe(true);
+    expect(arrow.y).toBeGreaterThan(12.45);
+    expect(arrow.y).toBeLessThan(12.55);
+    run(world, 200);
+    expect(world.arrows()).toHaveLength(0);
+  });
+});
+
 describe('받은 화살 맞추기', () => {
   const shot = { id: 1, x: 5, y: 5, vx: 10, vy: 0, age: 0.5 };
 
@@ -230,6 +244,20 @@ describe('받은 화살 맞추기', () => {
     expect(world.arrows()).toHaveLength(1);
     expect(world.shots('r')[0].age).toBeCloseTo(0.5, 1);
     world.syncShots('r', []);
+    expect(world.arrows()).toHaveLength(0);
+  });
+
+  it('local 공을 맞힌 화살은 같은 목록을 다시 받아도 되살아나지 않는다', () => {
+    const world = new World(FLAT, 'arrows');
+    world.addBall('b', 8, 11.9, true);
+    run(world, 120);
+    const early = { id: 1, x: 5, y: 11.9, vx: 10, vy: -4, age: 0 };
+    world.syncShots('r', [early]);
+    expect(world.arrows()).toHaveLength(1);
+    const events = run(world, 30);
+    expect(ofType(events, 'out')).toMatchObject([{ id: 'b', cause: 'arrow' }]);
+    expect(world.arrows()).toHaveLength(0);
+    world.syncShots('r', [{ ...early, age: 0.5 }]);
     expect(world.arrows()).toHaveLength(0);
   });
 

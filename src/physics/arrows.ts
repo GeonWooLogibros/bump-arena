@@ -60,12 +60,33 @@ export class Arrows {
 
   constructor(private readonly map: GameMap) {}
 
-  /** owner의 화살을 쏘고 화살 번호를 돌려줍니다. 번호는 주인별로 1부터 늘어납니다. */
-  launch(owner: string, x: number, y: number, vx: number, vy: number): number {
+  /**
+   * owner의 화살을 (x, y)에서 쏩니다. 번호는 주인별로 1부터 늘어납니다.
+   * 공 중심 origin에서 (x, y)까지 사이에 발판이 있으면 그 표면에 이미 꽂힌 채로 시작하고 true를 돌려줍니다.
+   */
+  launch(owner: string, origin: Point, x: number, y: number, vx: number, vy: number): boolean {
     const id = (this.nextId.get(owner) ?? 0) + 1;
     this.nextId.set(owner, id);
-    this.list.push(this.create(owner, { id, x, y, vx, vy, age: 0 }));
-    return id;
+    const wall = segmentHit(this.map, origin, [x, y]);
+    if (!wall) {
+      this.list.push(this.create(owner, { id, x, y, vx, vy, age: 0 }));
+      return false;
+    }
+    // 받는 쪽이 같은 발판에 꽂히도록 발사 정보는 표면 바로 앞(0.01m)에 둡니다.
+    const speed = Math.hypot(vx, vy);
+    const arrow = this.create(owner, {
+      id,
+      x: wall[0] - (vx / speed) * 0.01,
+      y: wall[1] - (vy / speed) * 0.01,
+      vx,
+      vy,
+      age: 0,
+    });
+    arrow.x = wall[0];
+    arrow.y = wall[1];
+    arrow.stuck = true;
+    this.list.push(arrow);
+    return true;
   }
 
   /** 화살 하나씩 한 step 진행합니다. 꽂히거나 맞히거나 수명이 다한 화살은 처리하고 결과를 돌려줍니다. */
@@ -77,6 +98,7 @@ export class Arrows {
       if (outcome === 'gone') this.list.splice(i, 1);
       else if (outcome !== 'fly' && outcome !== 'stick') {
         result.hits.push(outcome.hit);
+        this.lost.add(`${this.list[i].owner}:${this.list[i].shot.id}`);
         this.list.splice(i, 1);
       }
     }
@@ -123,7 +145,13 @@ export class Arrows {
 
   /** 지금 남아 있는 화살들의 모습입니다. */
   views(): ArrowView[] {
-    return this.list.map((a) => ({ owner: a.owner, x: a.x, y: a.y, angle: a.angle, stuck: a.stuck }));
+    return this.list.map((a) => ({
+      owner: a.owner,
+      x: a.x,
+      y: a.y,
+      angle: a.angle,
+      stuck: a.stuck,
+    }));
   }
 
   private create(owner: string, shot: ArrowShot): Arrow {

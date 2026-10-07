@@ -416,7 +416,15 @@ export class World {
     const speed = TUNING.arrowMinSpeed + (TUNING.arrowMaxSpeed - TUNING.arrowMinSpeed) * ratio;
     const p = body.getPosition();
     const gap = TUNING.radius + 0.2;
-    this.arrowList.launch(id, p.x + dir[0] * gap, p.y + dir[1] * gap, dir[0] * speed, dir[1] * speed);
+    const stuck = this.arrowList.launch(
+      id,
+      [p.x, p.y],
+      p.x + dir[0] * gap,
+      p.y + dir[1] * gap,
+      dir[0] * speed,
+      dir[1] * speed,
+    );
+    if (stuck) events.push({ type: 'stick' });
     entry.cooldown = TUNING.arrowCooldown;
     events.push({ type: 'shoot', id });
   }
@@ -434,6 +442,7 @@ export class World {
   /** 발판의 고정점과 공 사이에 줄을 겁니다. 길이는 지금의 거리입니다. */
   private attach(entry: Entry, anchor: Point): void {
     if (!entry.body) return;
+    this.release(entry);
     const p = entry.body.getPosition();
     const joint = this.world.createJoint(
       new RopeJoint({
