@@ -24,6 +24,8 @@ import { Session } from './session';
 export const SEND_INTERVAL = 60;
 /** 방에 들어온 직후 다른 사람의 상태가 다 도착하기까지 기다리는 시간(밀리초)입니다. 그동안은 방장 권한을 쓰지 않습니다. */
 export const SETTLE_MS = 2000;
+/** 경기 중에 상대의 소식이 이만큼 끊기면 나간 것으로 봅니다(밀리초). 대기실에서는 쓰지 않습니다. */
+export const GONE_MS = 10000;
 
 export type Stage = 'idle' | 'joining' | 'lobby' | 'game';
 
@@ -99,6 +101,8 @@ export class Multiplayer {
   private color = 0;
   private ready = false;
   private joinedAt = 0;
+  /** stage가 game이 된 시각. 대기실에서는 아무도 보내지 않으므로 소식이 끊긴 시간은 이때부터 셉니다. */
+  private gameSince = 0;
   /** 방에 들어온 직후에 한 번만 하는 확인(빈 방, 가득 찬 방)을 마쳤는지 여부. */
   private arrived = false;
   /** 보낼 때마다 올리는 번호. */
@@ -347,9 +351,15 @@ export class Multiplayer {
     return this.created || this.now() - this.joinedAt >= SETTLE_MS;
   }
 
+  /** 경기 중에 소식이 오래 끊긴 사람인지 알려 줍니다. updatedAt은 그 사람의 상태를 마지막으로 받은 시각입니다. */
+  private gone(updatedAt: number): boolean {
+    return this.stage === 'game' && this.now() - Math.max(updatedAt, this.gameSince) > GONE_MS;
+  }
+
   private setStage(stage: Stage): void {
     if (this.stage === stage) return;
     this.stage = stage;
+    if (stage === 'game') this.gameSince = this.now();
     this.hooks.onStage(stage);
   }
 
@@ -357,13 +367,17 @@ export class Multiplayer {
     this.room?.presence(patch).catch(() => undefined);
   }
 
-  /** 방을 읽습니다. 방이 붙여 준 내 id를 처음 알게 되면 그 id로 Session을 만듭니다. */
+  /**
+   * 방을 읽습니다. 사람마다 한 번만 읽어서 그 결과를 방장 정보와 Frame에 함께 씁니다.
+   * 방이 붙여 준 내 id를 처음 알게 되면 그 id로 Session을 만듭니다.
+   */
   private scan(): Scan {
     const all: PeerState[] = [];
     let mine: PeerState | null = null;
     for (const peer of this.room?.peers() ?? []) {
       // 게시한 세션이 방에 들어와 있을 수 있는데, 사람이 아니므로 뺍니다.
       if (peer.kind === 'agent') continue;
+      if (!peer.sameTab && this.gone(peer.updatedAt)) continue;
       let state = readPeer(peer.peer, peer.sameTab, peer.presence);
       if (peer.sameTab) {
         // 내가 올린 값은 방에 늦게 보일 수 있으므로 내가 알고 있는 값으로 봅니다.

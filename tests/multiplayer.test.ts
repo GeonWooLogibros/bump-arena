@@ -1,9 +1,10 @@
-import { describe, expect, it } from 'vitest';
-import { Multiplayer, SEND_INTERVAL, SETTLE_MS } from '../src/multiplayer';
+import { describe, expect, it, vi } from 'vitest';
+import { GONE_MS, Multiplayer, SEND_INTERVAL, SETTLE_MS } from '../src/multiplayer';
 import type { Stage } from '../src/multiplayer';
 import type { LobbyLike, NamedRoomLike, PeerLike } from '../src/net/types';
 import { NO_INPUT } from '../src/physics/world';
 import type { BallView, Input, WorldEvent } from '../src/physics/world';
+import type { Frame } from '../src/session';
 
 const FRAME_MS = 16;
 
@@ -505,6 +506,82 @@ describe('경기 중', () => {
     host.mp.start();
     pass(hub, 100, host, guest);
     expect(guest.mp.session?.match).toMatchObject({ game: 2, round: 1, phase: 'countdown' });
+  });
+});
+
+/** 이 화면의 Session이 받는 Frame을 기록합니다. */
+function frames(c: Client): Frame[] {
+  const session = c.mp.session;
+  if (!session) throw new Error('Session이 없습니다.');
+  const seen: Frame[] = [];
+  const update = session.update.bind(session);
+  vi.spyOn(session, 'update').mockImplementation((dtMs, input, frame) => {
+    seen.push(frame);
+    return update(dtMs, input, frame);
+  });
+  return seen;
+}
+
+describe('Session에 넘기는 Frame', () => {
+  it('방장 정보는 peers에 든 방장 항목의 host와 같은 객체다', async () => {
+    const hub = new FakeHub();
+    const { host, guest } = await startedPair(hub, 1);
+    const seen = frames(guest);
+    pass(hub, 200, host, guest);
+    expect(seen.length).toBeGreaterThan(5);
+    for (const frame of seen) {
+      expect(frame.hosting).toBe(false);
+      expect(frame.host).not.toBeNull();
+      expect(frame.peers.map((p) => p.peer)).toEqual(['p0']);
+      expect(frame.peers[0].host).toBe(frame.host);
+    }
+  });
+
+  it('경기 중에 소식이 9초 끊긴 사람은 남고 11초 끊긴 사람은 빠진다', async () => {
+    const hub = new FakeHub();
+    const { host, guest } = await startedPair(hub, 1);
+    const seen = frames(host);
+    pass(hub, 9000, host);
+    expect(seen.every((frame) => frame.peers.some((p) => p.peer === 'p1'))).toBe(true);
+    expect(host.mp.players().map((p) => p.id)).toContain('p1');
+    pass(hub, 2000, host);
+    expect(seen.at(-1)?.peers).toEqual([]);
+    expect(host.mp.players().map((p) => p.id)).not.toContain('p1');
+
+    pass(hub, 100, host, guest);
+    expect(seen.at(-1)?.peers.map((p) => p.peer)).toEqual(['p1']);
+  });
+
+  it('대기실에서 오래 조용했던 사람도 경기가 시작되면 빠지지 않는다', async () => {
+    const hub = new FakeHub();
+    const [host, guest] = await room(hub, 1);
+    guest.mp.toggleReady();
+    pass(hub, GONE_MS * 2, host, guest);
+    expect(host.mp.lobbyView()?.rows.map((row) => row.id)).toEqual(['p0', 'p1', 'bot1']);
+    host.mp.start();
+    const seen = frames(host);
+    pass(hub, 200, host, guest);
+    expect(seen.every((frame) => frame.peers.some((p) => p.peer === 'p1'))).toBe(true);
+    expect(guest.mp.session?.match.roster).toEqual(['p0', 'p1', 'bot1']);
+  });
+
+  it('경기 중에 방장의 소식이 11초 끊기면 다음 사람이 점수와 라운드를 이어받는다', async () => {
+    const hub = new FakeHub();
+    const { host, guest } = await startedPair(hub, 0);
+    guest.input = { ...NO_INPUT, left: true };
+    passUntil(hub, () => host.mp.session?.match.round === 2, [host, guest]);
+    pass(hub, 100, host, guest);
+    guest.input = { ...NO_INPUT };
+    const scores = { ...guest.mp.session?.match.scores };
+    expect(scores.p0 + scores.p1).toBe(1);
+
+    pass(hub, 9000, guest);
+    expect(guest.mp.isHost()).toBe(false);
+    pass(hub, 1100, guest);
+    expect(guest.mp.isHost()).toBe(true);
+    expect(guest.mp.stage).toBe('game');
+    expect(guest.mp.session?.match).toMatchObject({ game: 1, round: 2, scores });
+    expect(guest.mp.players().map((p) => p.id)).toEqual(['p1']);
   });
 });
 
