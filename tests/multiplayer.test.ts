@@ -58,6 +58,16 @@ class FakeHub {
     };
   }
 
+  /** 그 사람이 올려 둔 값을 지금 다시 받은 것처럼 만듭니다. 멈췄던 화면이 예전 값을 다시 보내는 경우입니다. */
+  resend(peer: string): void {
+    for (const members of this.rooms.values()) {
+      const entry = members.get(peer);
+      if (!entry) continue;
+      const presence = { ...entry.presence, n: Number(entry.presence.n) + 1 };
+      members.set(peer, { ...entry, presence, updatedAt: this.now });
+    }
+  }
+
   /** 사람이 아닌 참가자(게시한 세션)를 모든 방에 넣습니다. */
   addAgent(peer: string): void {
     for (const members of this.rooms.values()) members.set(peer, { presence: {}, kind: 'agent', updatedAt: this.now });
@@ -582,6 +592,37 @@ describe('Session에 넘기는 Frame', () => {
     expect(guest.mp.stage).toBe('game');
     expect(guest.mp.session?.match).toMatchObject({ game: 1, round: 2, scores });
     expect(guest.mp.players().map((p) => p.id)).toEqual(['p1']);
+  });
+});
+
+describe('멈췄다가 돌아온 방장', () => {
+  it('더 많이 진행된 경기를 올리는 새 방장이 그대로 방장이고 점수와 라운드가 되돌아가지 않는다', async () => {
+    const hub = new FakeHub();
+    const { host, guest } = await startedPair(hub, 0);
+    pass(hub, GONE_MS + 1000, guest);
+    expect(guest.mp.isHost()).toBe(true);
+    passUntil(hub, () => guest.mp.session?.match.round === 2, [guest]);
+    const round = guest.mp.session?.match.round;
+    const scores = { ...guest.mp.session?.match.scores };
+    expect(scores.p1).toBe(1);
+    expect(host.mp.session?.match.round).toBe(1);
+
+    // 멈췄던 방장의 예전 방장 정보가 다시 도착해도 새 방장은 물러나지 않습니다.
+    hub.resend('p0');
+    pass(hub, FRAME_MS, guest);
+    expect(guest.mp.players().map((p) => p.id)).toEqual(['p0', 'p1']);
+    expect(guest.mp.isHost()).toBe(true);
+    expect(guest.mp.session?.match).toMatchObject({ game: 1, round, scores });
+
+    // 멈췄던 방장의 화면이 다시 움직이면 스스로 물러나서 새 방장의 경기를 따릅니다.
+    pass(hub, 300, host, guest);
+    expect(host.mp.isHost()).toBe(false);
+    expect(guest.mp.isHost()).toBe(true);
+    expect([...hub.rooms.values()][0].get('p0')?.presence.host).toBeUndefined();
+    for (const c of [host, guest]) {
+      expect(c.mp.stage).toBe('game');
+      expect(c.mp.session?.match).toMatchObject({ game: 1, round, scores });
+    }
   });
 });
 

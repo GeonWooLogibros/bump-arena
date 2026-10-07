@@ -1,5 +1,15 @@
 import { describe, expect, it } from 'vitest';
-import { botColors, cleanName, makeRoomCode, parseRoomCode, pickHost, resolveColor, roomName, seatOrder } from '../src/game/lobby';
+import {
+  botColors,
+  cleanName,
+  makeRoomCode,
+  matchProgress,
+  parseRoomCode,
+  pickHost,
+  resolveColor,
+  roomName,
+  seatOrder,
+} from '../src/game/lobby';
 import type { Seat } from '../src/game/lobby';
 
 const seat = (peer: string, since: number, color = 0, hosting = false): Seat => ({ peer, since, color, hosting });
@@ -53,6 +63,31 @@ describe('pickHost', () => {
   });
   it('빈 목록이면 null입니다', () => {
     expect(pickHost([])).toBeNull();
+  });
+  it('둘이 hosting이면 경기가 더 많이 진행된 사람입니다', () => {
+    const seats = [{ ...seat('a', 1, 0, true), progress: 100100 }, { ...seat('b', 2, 0, true), progress: 100201 }];
+    expect(pickHost(seats)).toBe('b');
+  });
+  it('진행된 정도가 같으면 앞사람입니다', () => {
+    const seats = [{ ...seat('b', 2, 0, true), progress: 100201 }, { ...seat('a', 1, 0, true), progress: 100201 }];
+    expect(pickHost(seats)).toBe('a');
+  });
+  it('hosting이 아닌 사람의 progress는 보지 않습니다', () => {
+    expect(pickHost([{ ...seat('a', 1), progress: 999 }, seat('b', 2, 0, true)])).toBe('b');
+  });
+});
+
+describe('matchProgress', () => {
+  const match = (game: number, round: number, scores: Record<string, number> = {}) => ({ game, round, scores });
+  it('경기 번호, 라운드, 점수 합의 순서로 커집니다', () => {
+    expect(matchProgress(match(0, 0))).toBe(0);
+    expect(matchProgress(match(1, 2, { a: 1, b: 2 }))).toBe(100203);
+    expect(matchProgress(match(2, 1))).toBeGreaterThan(matchProgress(match(1, 9, { a: 7, b: 6 })));
+    expect(matchProgress(match(1, 3))).toBeGreaterThan(matchProgress(match(1, 2, { a: 7, b: 7, c: 7 })));
+    expect(matchProgress(match(1, 2, { a: 2 }))).toBeGreaterThan(matchProgress(match(1, 2, { a: 1 })));
+  });
+  it('점수 합은 99까지만 셉니다', () => {
+    expect(matchProgress(match(1, 1, { a: 99, b: 99 }))).toBe(100199);
   });
 });
 

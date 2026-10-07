@@ -52,6 +52,14 @@ export interface Seat {
   since: number;
   color: number;
   hosting: boolean;
+  /** 올리고 있는 경기가 진행된 정도(matchProgress). hosting인 사람에게만 뜻이 있고, 없으면 0으로 봅니다. */
+  progress?: number;
+}
+
+/** 경기가 진행된 정도를 숫자 하나로 만듭니다. 경기 번호, 라운드, 점수 합의 순서로 비교됩니다. */
+export function matchProgress(match: { game: number; round: number; scores: Record<string, number> }): number {
+  const total = Object.values(match.scores).reduce((sum, score) => sum + score, 0);
+  return match.game * 100000 + match.round * 100 + Math.min(99, total);
 }
 
 /** 방에 들어온 순서(since, 같으면 peer 사전순)로 늘어놓습니다. */
@@ -59,10 +67,17 @@ export function seatOrder<T extends { peer: string; since: number }>(list: reado
   return [...list].sort((a, b) => a.since - b.since || (a.peer < b.peer ? -1 : a.peer > b.peer ? 1 : 0));
 }
 
-/** 방장을 정합니다. 방장 정보를 올리고 있는 사람 가운데 순서가 가장 앞인 사람, 아무도 없으면 전체에서 가장 앞인 사람입니다. */
+/**
+ * 방장을 정합니다. 방장 정보를 올리고 있는 사람 가운데 경기가 가장 많이 진행된 사람(같으면 순서가 앞인 사람),
+ * 아무도 없으면 전체에서 순서가 가장 앞인 사람입니다.
+ */
 export function pickHost(seats: readonly Seat[]): string | null {
   const ordered = seatOrder(seats);
-  return (ordered.find((s) => s.hosting) ?? ordered[0])?.peer ?? null;
+  let host: Seat | undefined;
+  for (const seat of ordered) {
+    if (seat.hosting && (!host || (seat.progress ?? 0) > (host.progress ?? 0))) host = seat;
+  }
+  return (host ?? ordered[0])?.peer ?? null;
 }
 
 /** 순서가 앞선 사람과 색이 겹치면 아무도 쓰지 않는 가장 앞 번호의 색을 돌려줍니다. 겹치지 않으면 원래 색입니다. */

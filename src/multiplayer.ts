@@ -5,6 +5,7 @@ import {
   botColors,
   cleanName,
   makeRoomCode,
+  matchProgress,
   parseRoomCode,
   pickHost,
   resolveColor,
@@ -390,7 +391,9 @@ export class Multiplayer {
 
     const humans = seatOrder(all).slice(0, MAX_PLAYERS);
     const seated = mine !== null && humans.includes(mine);
-    const picked = pickHost(humans.map((p) => ({ ...p, hosting: p.host !== null })));
+    // 멈췄다가 돌아온 예전 방장이 경기를 되돌리지 않도록, 더 많이 진행된 경기를 올리는 사람을 방장으로 봅니다.
+    const seats = humans.map((p) => ({ ...p, hosting: p.host !== null, progress: p.host ? matchProgress(p.host) : 0 }));
+    const picked = pickHost(seats);
     const hosting = mine !== null && picked === mine.peer && this.settled();
     const host = hosting ? mine : (humans.find((p) => p.peer === picked && !p.me) ?? null);
     return { humans, mine, count: all.length, seated, host, hosting };
