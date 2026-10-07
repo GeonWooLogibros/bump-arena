@@ -17,7 +17,7 @@ import { browserStorage, loadProfile, saveProfile } from './storage';
 import { createMenus } from './ui/menus';
 import type { MenuView } from './ui/menus';
 
-/** 초대 링크를 복사했다는 표시를 보여 주는 시간(밀리초). */
+/** 초대 링크를 복사한 결과를 보여 주는 시간(밀리초). */
 const COPIED_MS = 2000;
 /** 터치 화면의 특수 동작 버튼에 쓰는 글자입니다. */
 const SPECIAL_LABEL: Record<Mode, string> = { classic: '무겁게', grapple: '줄', arrows: '화살' };
@@ -40,7 +40,8 @@ const invitedCode = parseRoomCode(window.location.hash) ?? '';
 let profile = loadProfile(store);
 let width = 0;
 let height = 0;
-let copiedAt = -Infinity;
+/** 초대 링크 복사의 결과와 그 시각입니다. */
+let copy: { ok: boolean; at: number } | null = null;
 /** 소리를 한 번씩만 내기 위해 기억하는 지난 프레임의 경기 단계와 카운트다운 숫자입니다. */
 let lastPhase: Phase = 'lobby';
 let lastCount = 0;
@@ -58,14 +59,20 @@ let pending = false;
 function adopt(): void {
   if (!pending || !connection || mp.stage !== 'idle') return;
   pending = false;
-  mp = new Multiplayer(connection.lobby, connection.inviteBase, { onStage });
+  const next = new Multiplayer(connection.lobby, connection.inviteBase, { onStage });
+  // 방에서 나오며 남긴 안내가 바꾸는 사이에 사라지지 않게 옮깁니다.
+  next.error = mp.error;
+  mp = next;
 }
 
-void connect().then((result) => {
-  connection = result;
-  pending = result.lobby !== null;
-  adopt();
-});
+void connect()
+  // 연결하다가 오류가 나면 연습하기만 할 수 있는 상태로 둡니다.
+  .catch((): Connection => ({ lobby: null, inviteBase: '', via: 'none' }))
+  .then((result) => {
+    connection = result;
+    pending = result.lobby !== null;
+    adopt();
+  });
 
 if (import.meta.env.DEV) {
   // 개발 중 확인용입니다. mp는 연결된 뒤에 바뀌므로 읽을 때마다 지금 것을 돌려줍니다.
@@ -118,10 +125,17 @@ const menus = createMenus(app, {
   start: () => mp.start(),
   copy: (invite) => {
     // 클립보드를 쓸 수 없는 환경에서는 화면의 방 코드를 직접 알려 주면 됩니다.
-    navigator.clipboard?.writeText(invite).then(
-      () => (copiedAt = performance.now()),
-      () => undefined,
-    );
+    const done = (ok: boolean): void => {
+      copy = { ok, at: performance.now() };
+    };
+    try {
+      navigator.clipboard.writeText(invite).then(
+        () => done(true),
+        () => done(false),
+      );
+    } catch {
+      done(false);
+    }
   },
   lobby: () => mp.backToLobby(),
   sound: () => audio.toggle(),
@@ -152,9 +166,17 @@ function react(events: readonly WorldEvent[], view: SessionView | null, players:
   const count = view && phase === 'countdown' ? Math.ceil((TUNING.countdownMs - view.match.ms) / 1000) : 0;
   if (count > 0 && count !== lastCount) audio.play('tick');
   if (phase !== lastPhase) {
-    if (phase === 'play' && lastPhase === 'countdown') audio.play('go', 0.8);
-    else if (phase === 'roundEnd' && view?.match.winner) audio.play('win', 0.6);
-    else if (phase === 'matchEnd') audio.play('win');
+    if (phase === 'play') {
+      if (lastPhase === 'countdown') audio.play('go', 0.8);
+      // 버튼에 초점이 남아 있으면 스페이스가 그 버튼을 누르므로 초점을 풉니다.
+      if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+    } else if (phase === 'roundEnd' && view?.match.winner) {
+      // 경기를 끝내는 승리이면 크게 냅니다. 이어지는 matchEnd에서는 다시 내지 않습니다.
+      const { winner, scores, settings } = view.match;
+      audio.play('win', (scores[winner] ?? 0) >= settings.target ? 1 : 0.6);
+    } else if (phase === 'matchEnd' && lastPhase !== 'roundEnd') {
+      audio.play('win');
+    }
   }
   lastPhase = phase;
   lastCount = count;
@@ -163,14 +185,16 @@ function react(events: readonly WorldEvent[], view: SessionView | null, players:
 function menuView(now: number, view: SessionView | null, players: PlayerInfo[]): MenuView {
   if (mp.stage === 'lobby') {
     const lobby = mp.lobbyView();
-    if (lobby) return { kind: 'lobby', view: lobby, copied: now - copiedAt < COPIED_MS };
+    const shown = copy !== null && now - copy.at < COPIED_MS ? copy : null;
+    if (lobby) return { kind: 'lobby', view: lobby, copy: shown ? (shown.ok ? 'done' : 'failed') : 'idle' };
   }
   if (mp.stage === 'game') {
     if (view?.match.phase !== 'matchEnd') return { kind: 'play', muted: audio.muted };
     const rows = scoreRows(view, players);
+    const { winner } = view.match;
     return {
       kind: 'result',
-      winner: rows.find((row) => row.id === view.match.winner)?.name ?? GONE_NAME,
+      winner: winner === null ? null : (rows.find((row) => row.id === winner)?.name ?? GONE_NAME),
       rows: rows
         .map((row) => ({ name: row.name, fill: row.colors.fill, edge: row.colors.edge, score: row.score, me: row.me }))
         .sort((a, b) => b.score - a.score),
@@ -213,7 +237,7 @@ function frame(time: number): void {
   react(events, view, players);
   effects.update(Math.min(elapsed, 100) / 1000);
 
-  const playing = view !== null && view.match.phase !== 'matchEnd';
+  const playing = view !== null && !view.watching && view.match.phase !== 'matchEnd';
   input.setTouchVisible(playing, view ? SPECIAL_LABEL[view.match.settings.mode] : '');
   drawScene(ctx, { width, height, view, players, effects, time });
   menus.show(menuView(time, view, players));

@@ -26,9 +26,11 @@ export type MenuView =
       busy: boolean;
       error: string | null;
     }
-  | { kind: 'lobby'; view: LobbyView; copied: boolean }
+  /** copy는 초대 링크 복사의 결과입니다. 잠깐 보여 준 뒤 idle로 돌아갑니다. */
+  | { kind: 'lobby'; view: LobbyView; copy: 'idle' | 'done' | 'failed' }
   | { kind: 'play'; muted: boolean }
-  | { kind: 'result'; winner: string; rows: ResultRow[]; isHost: boolean };
+  /** winner는 우승자의 이름입니다. 우승자 없이 끝났으면 null입니다. */
+  | { kind: 'result'; winner: string | null; rows: ResultRow[]; isHost: boolean };
 
 export interface MenuActions {
   practice(name: string, color: number): void;
@@ -188,7 +190,7 @@ export function createMenus(root: HTMLElement, actions: MenuActions): { show(vie
     return panel;
   }
 
-  function lobby({ view, copied }: Extract<MenuView, { kind: 'lobby' }>): HTMLElement {
+  function lobby({ view, copy }: Extract<MenuView, { kind: 'lobby' }>): HTMLElement {
     const panel = el('div', 'panel lobby');
     const { settings } = view;
     const canEdit = view.isHost && view.settled;
@@ -199,8 +201,10 @@ export function createMenus(root: HTMLElement, actions: MenuActions): { show(vie
       const ticket = el('div', 'ticket');
       const codeBox = el('div', 'ticket-code');
       codeBox.append(el('span', 'label', '방 코드'), el('strong', 'code', view.code.toUpperCase()));
-      ticket.append(codeBox, button(copied ? '복사 완료' : '초대 링크 복사', () => actions.copy(view.invite), 'btn small'));
+      const label = copy === 'done' ? '복사 완료' : '초대 링크 복사';
+      ticket.append(codeBox, button(label, () => actions.copy(view.invite), 'btn small'));
       people.append(ticket);
+      if (copy === 'failed') people.append(el('p', 'error', '복사하지 못했습니다.'));
     }
 
     const seats = el('ul', 'seats');
@@ -302,7 +306,7 @@ export function createMenus(root: HTMLElement, actions: MenuActions): { show(vie
 
   function result(view: Extract<MenuView, { kind: 'result' }>): HTMLElement {
     const panel = el('div', 'panel');
-    panel.append(el('h1', 'title', `${view.winner} 우승`));
+    panel.append(el('h1', 'title', view.winner === null ? '무승부' : `${view.winner} 우승`));
     const rows = el('ul', 'seats');
     for (const row of view.rows) {
       const item = el('li', row.me ? 'seat me' : 'seat');

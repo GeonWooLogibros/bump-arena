@@ -51,7 +51,8 @@ export function createAudio(): Sound {
       read(FILES[name])
         .then((data) => ctx.decodeAudioData(data))
         .then((buffer) => buffers.set(name, buffer))
-        .catch(() => undefined);
+        // 불러오지 못한 소리는 내지 않고 진행하되, 원인을 찾을 수 있게 알립니다. 소리마다 한 번만 불러옵니다.
+        .catch((error: unknown) => console.warn(`소리를 불러오지 못했습니다: ${name}`, error));
     }
   };
 

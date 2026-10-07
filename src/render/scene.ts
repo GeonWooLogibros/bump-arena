@@ -50,6 +50,8 @@ const FONT = "system-ui, 'Apple SD Gothic Neo', sans-serif";
 const TAU = Math.PI * 2;
 /** 화살의 길이(미터)입니다. */
 const ARROW_LENGTH = 0.9;
+/** 라운드 결과 문구를 쓰는 높이(미터)입니다. 점수표 아래, 화면 위쪽입니다. */
+const BANNER_Y = 3.6;
 /** 화면이 흔들리는 폭(미터)입니다. */
 const SHAKE_REACH = 0.14;
 
@@ -349,17 +351,20 @@ function drawScoreboard(
   ctx.fillText(goal, left + width - pad, middle + u);
 }
 
-/** 화면 가운데의 큰 문구입니다. 뒤에 어두운 띠를 깔아 줍니다. */
-function drawBanner(ctx: CanvasRenderingContext2D, text: string, color: string, box: ViewBox, size: number): void {
+/** 큰 문구입니다. y는 글자 가운데의 높이(미터)입니다. 공과 발판을 가리지 않게 글자에 테두리만 두릅니다. */
+function drawBanner(
+  ctx: CanvasRenderingContext2D,
+  text: string,
+  color: string,
+  box: ViewBox,
+  y: number,
+  size: number,
+): void {
   const { scale, offsetX, offsetY } = box;
-  const middle = offsetY + (TUNING.viewH / 2) * scale;
-  const band = 3 * scale;
-  ctx.fillStyle = 'rgba(19, 23, 34, 0.5)';
-  ctx.fillRect(offsetX, middle - band / 2, TUNING.viewW * scale, band);
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.font = `900 ${Math.round(size)}px ${FONT}`;
-  outlined(ctx, text, offsetX + (TUNING.viewW / 2) * scale, middle, color, Math.max(3, size * 0.12));
+  outlined(ctx, text, offsetX + (TUNING.viewW / 2) * scale, offsetY + y * scale, color, Math.max(3, size * 0.14));
 }
 
 /** 카운트다운, 라운드 결과, 구경 안내를 그립니다. */
@@ -371,10 +376,11 @@ function drawMessages(ctx: CanvasRenderingContext2D, view: SessionView, rows: re
     const count = Math.min(3, Math.ceil(left / 1000));
     // 숫자가 바뀔 때 크게 나타났다가 줄어듭니다.
     const fresh = (left % 1000) / 1000;
-    drawBanner(ctx, String(count), TEXT, box, scale * (1.5 + 0.7 * fresh));
+    drawBanner(ctx, String(count), TEXT, box, TUNING.viewH / 2, scale * (1.5 + 0.7 * fresh));
   } else if (phase === 'roundEnd') {
     const row = rows.find((r) => r.id === winner);
-    drawBanner(ctx, row ? `${row.name} 승리` : '무승부', row ? row.colors.fill : TEXT, box, scale * 1.4);
+    // 남은 공을 끝까지 볼 수 있게 화면 위쪽에 씁니다.
+    drawBanner(ctx, row ? `${row.name} 승리` : '무승부', row ? row.colors.fill : TEXT, box, BANNER_Y, scale * 1.3);
   }
   if (view.watching && phase !== 'matchEnd') {
     ctx.textAlign = 'center';
