@@ -212,7 +212,7 @@ export class Session {
     for (const id of this.current.roster) {
       if (!isBot(id)) continue;
       this.world.setLocal(id, this.hosting);
-      if (this.hosting) this.bots.set(id, new Bot());
+      if (this.hosting) this.bots.set(id, new Bot(this.random));
     }
   }
 
