@@ -3,21 +3,12 @@ import { TUNING } from './modes';
 import type { Mode } from './modes';
 import { NO_INPUT } from '../physics/world';
 import type { Input } from '../physics/world';
-import { segmentHit, surfaceBelow } from '../physics/geometry';
+import { ARROW_CHARGE_MAX, ARROW_CHARGE_MIN, aimShot } from './bot-aim';
+import { GRID, GROUND_GAP, LAND_INSET, crossing, heightAt, leapSpeed, ledgeUnder, terrainOf } from './bot-terrain';
+import type { Ledge, Terrain } from './bot-terrain';
 
 /** AI가 상황을 다시 보고 입력을 고르는 간격(초)입니다. */
 const THINK_INTERVAL = 0.15;
-
-/** 발판 윗면을 재는 가로 간격(m)입니다. */
-const GRID = 0.25;
-/** 이웃한 두 지점의 높이 차가 이보다 크면 걸어서 이어지지 않는 곳으로 봅니다(m). */
-const MAX_STEP = 0.15;
-/** 이보다 좁은 윗면은 설 자리로 보지 않습니다(m). */
-const MIN_LEDGE = 1;
-/** 공 중심이 자리 끝에서 이만큼 벗어나도 아직 그 자리 위에 있다고 봅니다(m). */
-const OVERHANG = 0.3;
-/** 공 밑과 윗면 사이가 이보다 가까우면 서 있는 것으로 봅니다(m). */
-const GROUND_GAP = 0.2;
 
 /** 멈출 때 낼 수 있다고 어림하는 감속(m/s²)입니다. 반응이 늦는 만큼 실제 가속보다 작게 잡습니다. */
 const BRAKE = TUNING.accel * 0.8;
@@ -26,20 +17,12 @@ const EDGE_MARGIN = 0.45;
 /** 평소에 달리는 최고 속력(m/s)입니다. */
 const RUN_SPEED = 7;
 /** 상대에게 달려들 때의 최고 속력(m/s)입니다. */
-const CHARGE_SPEED = 17;
+const CHARGE_SPEED = 13;
 /** 목표 지점에 이만큼 가까우면 도착한 것으로 봅니다(m). */
 const ARRIVE_SLACK = 0.15;
 /** 원하는 속력과 이만큼 차이 나야 힘을 줍니다(m/s). */
 const SPEED_SLACK = 0.4;
 
-/** 뛰어서 올라갈 수 있다고 보는 높이(m)입니다. 한 번 뛰어 오르는 높이(약 2m)보다 작아야 합니다. */
-const MAX_CLIMB = 1.5;
-/** 공중에서 낼 수 있다고 어림하는 가속(m/s²)입니다. */
-const AIR_ACCEL = TUNING.accel * 0.85;
-/** 건너편 자리 끝에서 이만큼 안쪽을 내릴 곳으로 잡습니다(m). */
-const LAND_INSET = 1;
-/** 틈을 건너는 데 필요한 속력이 이보다 크면 건널 수 없는 틈으로 봅니다(m/s). */
-const LEAP_SPEED_MAX = 3;
 /** 자리 끝까지 이 거리(m) 안에 들어와야 뜁니다. */
 const LEAP_FROM = 2;
 /** 건너뛰기를 이 시간(초) 안에 끝내지 못하면 그만둡니다. */
@@ -136,17 +119,6 @@ const STUN_CAP_MAX = 3;
 /** 라운드가 시작된 뒤 처음 화살을 모으기까지 기다리는 시간(초)의 범위입니다. */
 const FIRST_SHOT_MIN = 1.5;
 const FIRST_SHOT_MAX = 3;
-/** 화살을 모으는 시간(초)의 범위입니다. */
-const ARROW_CHARGE_MIN = 0.4;
-const ARROW_CHARGE_MAX = 0.9;
-/** 모으는 시간을 살펴보는 간격(초)입니다. */
-const ARROW_CHARGE_STEP = 0.025;
-/** 화살이 상대 중심에서 이 거리(m) 안을 지나야 맞을 가능성이 있다고 봅니다. */
-const AIM_TOLERANCE = 0.5;
-/** 화살이 날아가는 것을 내다보는 시간(초)입니다. */
-const ARROW_FLIGHT = 1.5;
-/** 화살 길이 발판에 막히는지 살피는 간격(초)입니다. */
-const ARROW_PATH_STEP = 0.1;
 /** 쏜 뒤 다시 모으기까지 더 쉬는 시간(초)의 범위입니다. TUNING.arrowCooldown에 더합니다. */
 const ARROW_REST_MIN = 0.2;
 const ARROW_REST_MAX = 1;
@@ -174,37 +146,6 @@ export interface BotSense {
 type Me = BotSense['me'];
 type Other = BotSense['others'][number];
 
-/** 걸어서 이어지는 윗면 한 구간입니다. ys는 x0부터 GRID 간격으로 잰 높이입니다. */
-interface Ledge {
-  x0: number;
-  x1: number;
-  ys: number[];
-}
-
-/** 한 자리에서 다른 자리로 뛰어 건너는 방법입니다. */
-interface Crossing {
-  dir: 1 | -1;
-  /** 뛰는 쪽 자리 끝의 x. */
-  edge: number;
-  /** 내릴 곳의 x. */
-  land: number;
-  /** 뛰는 쪽 자리 끝에서 내릴 곳까지의 수평 거리(m). */
-  span: number;
-  /** 뛰어서 건너편 높이에 닿을 때까지 공중에 있는 시간(초). */
-  air: number;
-}
-
-/** 자리 끝에서 ahead만큼 못 미친 곳에서 뛸 때 건너편에 닿으려면 필요한 속력(m/s)입니다. */
-function leapSpeed(way: Crossing, ahead: number): number {
-  return (way.span + ahead - 0.5 * AIR_ACCEL * way.air * way.air) / way.air;
-}
-
-/** 맵에서 설 수 있는 자리들과, 자리에서 자리로 갈 때 먼저 건너갈 자리(없으면 -1)입니다. */
-interface Terrain {
-  ledges: Ledge[];
-  next: number[][];
-}
-
 /** 상대와 같은 자리에서 싸울 때의 행동입니다. */
 type Tactic = 'charge' | 'retreat' | 'hop';
 
@@ -215,103 +156,6 @@ interface Shot {
   release: number;
   prefer: number;
   since: number;
-}
-
-const terrains = new WeakMap<GameMap, Terrain>();
-
-/** 자리 위 x 지점의 윗면 높이입니다. 자리 밖이면 가까운 끝의 높이입니다. */
-function heightAt(ledge: Ledge, x: number): number {
-  const at = Math.max(0, Math.min(ledge.ys.length - 1, (x - ledge.x0) / GRID));
-  const i = Math.min(ledge.ys.length - 2, Math.floor(at));
-  if (i < 0) return ledge.ys[0];
-  return ledge.ys[i] + (ledge.ys[i + 1] - ledge.ys[i]) * (at - i);
-}
-
-/** a에서 b로 뛰어 건너는 방법을 수평 거리와 높이 차로 어림합니다. 건널 수 없으면 null입니다. */
-function crossing(a: Ledge, b: Ledge): Crossing | null {
-  let dir: 1 | -1;
-  if (b.x0 >= a.x1) dir = 1;
-  else if (b.x1 <= a.x0) dir = -1;
-  else return null;
-  const edge = dir > 0 ? a.x1 : a.x0;
-  const near = dir > 0 ? b.x0 : b.x1;
-  const drop = heightAt(b, near) - heightAt(a, edge);
-  if (drop < -MAX_CLIMB) return null;
-  const inset = Math.min(LAND_INSET, (b.x1 - b.x0) / 2);
-  const air = (TUNING.jumpSpeed + Math.sqrt(TUNING.jumpSpeed ** 2 + 2 * TUNING.gravity * drop)) / TUNING.gravity;
-  const way = { dir, edge, land: near + dir * inset, span: Math.abs(near - edge) + inset, air };
-  return leapSpeed(way, 0) > LEAP_SPEED_MAX ? null : way;
-}
-
-/** 맵의 도형에서 설 수 있는 자리와 자리 사이의 길을 찾습니다. */
-function survey(map: GameMap): Terrain {
-  const count = Math.round(TUNING.viewW / GRID) + 1;
-  // 도형마다 세로선과 만나는 윗면·아랫면을 잽니다.
-  const spans = map.shapes.map((shape) => {
-    const single = { ...map, shapes: [shape] };
-    return Array.from({ length: count }, (_, i) => {
-      const top = surfaceBelow(single, i * GRID, -Infinity);
-      return top === null ? null : ([top, surfaceBelow(single, i * GRID, top + 1e-6) ?? top] as const);
-    });
-  });
-  const open: { last: number; ledge: Ledge }[] = [];
-  const ledges: Ledge[] = [];
-  for (let i = 0; i < count; i++) {
-    for (const span of spans) {
-      const top = span[i]?.[0];
-      // 다른 도형 속에 묻힌 윗면은 설 수 없습니다.
-      if (top === undefined || spans.some((o) => o[i] && o[i]![0] < top - 1e-6 && top < o[i]![1] - 1e-6)) continue;
-      const chain = open.find((c) => c.last === i - 1 && Math.abs(c.ledge.ys[c.ledge.ys.length - 1] - top) <= MAX_STEP);
-      if (chain) {
-        chain.last = i;
-        chain.ledge.x1 = i * GRID;
-        chain.ledge.ys.push(top);
-      } else {
-        const ledge = { x0: i * GRID, x1: i * GRID, ys: [top] };
-        open.push({ last: i, ledge });
-        ledges.push(ledge);
-      }
-    }
-  }
-  const wide = ledges.filter((l) => l.x1 - l.x0 >= MIN_LEDGE);
-  const next = wide.map((_, from) => {
-    const first = wide.map(() => -1);
-    first[from] = from;
-    const queue = [from];
-    for (let head = 0; head < queue.length; head++) {
-      const at = queue[head];
-      wide.forEach((ledge, to) => {
-        if (first[to] >= 0 || !crossing(wide[at], ledge)) return;
-        first[to] = at === from ? to : first[at];
-        queue.push(to);
-      });
-    }
-    return first;
-  });
-  return { ledges: wide, next };
-}
-
-function terrainOf(map: GameMap): Terrain {
-  let terrain = terrains.get(map);
-  if (!terrain) {
-    terrain = survey(map);
-    terrains.set(map, terrain);
-  }
-  return terrain;
-}
-
-/** (x, y)에 있는 공의 바로 아래에 있는 자리의 번호입니다. 없으면 -1입니다. */
-function ledgeUnder(terrain: Terrain, x: number, y: number): number {
-  let best = -1;
-  let bestY = Infinity;
-  terrain.ledges.forEach((ledge, i) => {
-    if (x < ledge.x0 - OVERHANG || x > ledge.x1 + OVERHANG) return;
-    const top = heightAt(ledge, x);
-    if (top < y - GROUND_GAP || top >= bestY) return;
-    best = i;
-    bestY = top;
-  });
-  return best;
 }
 
 /** dir 쪽으로 미는 입력입니다. 이미 cap보다 빠르면 밀지 않습니다. */
@@ -357,47 +201,6 @@ function settles(me: Me, ledge: Ledge, time: number): boolean {
   const slide = (TUNING.gravity * slope) / (2 * GRID);
   const x = me.x + me.vx * time + 0.5 * slide * time * time;
   return x > ledge.x0 + EDGE_MARGIN && x < ledge.x1 - EDGE_MARGIN;
-}
-
-/** 모은 시간(초)에 따른 화살 속력입니다. */
-function arrowSpeed(charge: number): number {
-  const span = TUNING.arrowMaxCharge - TUNING.arrowMinCharge;
-  const ratio = Math.max(0, Math.min(1, (charge - TUNING.arrowMinCharge) / span));
-  return TUNING.arrowMinSpeed + (TUNING.arrowMaxSpeed - TUNING.arrowMinSpeed) * ratio;
-}
-
-/** (ux, uy) 방향으로 speed로 쏜 화살이 상대 위치 (rx, ry)(나 기준)를 가장 가까이 지날 때의 거리와 그때까지 걸린 시간입니다. */
-function closest(rx: number, ry: number, ux: number, uy: number, speed: number): { miss: number; time: number } {
-  const gap = TUNING.radius + 0.2;
-  let x = ux * gap;
-  let y = uy * gap;
-  const vx = ux * speed;
-  let vy = uy * speed;
-  let miss = Math.hypot(x - rx, y - ry);
-  let time = 0;
-  for (let t = TUNING.step; t <= ARROW_FLIGHT; t += TUNING.step) {
-    vy += TUNING.gravity * TUNING.step;
-    x += vx * TUNING.step;
-    y += vy * TUNING.step;
-    const d = Math.hypot(x - rx, y - ry);
-    if (d < miss) {
-      miss = d;
-      time = t;
-    } else if (d > miss + 3) break;
-  }
-  return { miss, time };
-}
-
-/** 화살이 time초 동안 날아가는 길에 발판이 없는지 봅니다. */
-function clearPath(map: GameMap, me: Me, ux: number, uy: number, speed: number, time: number): boolean {
-  const gap = TUNING.radius + 0.2;
-  const at = (t: number) =>
-    [me.x + ux * gap + ux * speed * t, me.y + uy * gap + uy * speed * t + 0.5 * TUNING.gravity * t * t] as const;
-  if (segmentHit(map, [me.x, me.y], at(0))) return false;
-  for (let t = 0; t < time; t += ARROW_PATH_STEP) {
-    if (segmentHit(map, at(t), at(Math.min(time, t + ARROW_PATH_STEP)))) return false;
-  }
-  return true;
 }
 
 /**
@@ -723,7 +526,7 @@ export class Bot {
     if (this.clock >= this.nextShotAt && grounded && settles(me, ledge, ARROW_CHARGE_MAX)) {
       const prefer = this.between(ARROW_CHARGE_MIN, ARROW_CHARGE_MAX);
       for (const other of [target, ...sense.others.filter((o) => o !== target)]) {
-        const plan = this.solve(sense, other, prefer, ARROW_CHARGE_MIN);
+        const plan = aimShot(sense.map, me, other, prefer, ARROW_CHARGE_MIN);
         if (!plan) continue;
         this.shot = { ...plan, id: other.id, prefer, since: this.clock };
         this.lastChanceAt = this.clock;
@@ -759,7 +562,8 @@ export class Bot {
       return { ...NO_INPUT };
     }
     const target = sense.others.find((o) => o.id === shot.id);
-    const plan = target && this.solve(sense, target, shot.prefer, Math.max(ARROW_CHARGE_MIN, charge + TUNING.step));
+    const plan =
+      target && aimShot(sense.map, sense.me, target, shot.prefer, Math.max(ARROW_CHARGE_MIN, charge + TUNING.step));
     if (plan) {
       shot.keys = plan.keys;
       shot.release = plan.release;
@@ -776,43 +580,5 @@ export class Bot {
       down: ky > 0,
       special: true,
     };
-  }
-
-  /**
-   * 상대를 맞힐 가능성이 있는 방향(8방향 가운데)과 모을 시간을 고릅니다. 없으면 null입니다.
-   * prefer에 가까운 시간을 먼저 살피고, 발판에 막히는 길은 버립니다.
-   */
-  private solve(
-    sense: BotSense,
-    target: Other,
-    prefer: number,
-    from: number,
-  ): { keys: readonly [number, number]; release: number } | null {
-    const { me, map } = sense;
-    const rx = target.x - me.x;
-    const ry = target.y - me.y;
-    const side = rx >= 0 ? 1 : -1;
-    const dirs = [
-      [side, 0],
-      [side, -1],
-      [side, 1],
-      [0, -1],
-      [0, 1],
-    ] as const;
-    const charges = [prefer];
-    for (let c = ARROW_CHARGE_MIN; c <= ARROW_CHARGE_MAX + 1e-9; c += ARROW_CHARGE_STEP) charges.push(c);
-    charges.sort((a, b) => Math.abs(a - prefer) - Math.abs(b - prefer));
-    for (const release of charges) {
-      if (release < from) continue;
-      const speed = arrowSpeed(release);
-      for (const keys of dirs) {
-        const len = Math.hypot(keys[0], keys[1]);
-        const ux = keys[0] / len;
-        const uy = keys[1] / len;
-        const { miss, time } = closest(rx, ry, ux, uy, speed);
-        if (miss <= AIM_TOLERANCE && clearPath(map, me, ux, uy, speed, time)) return { keys, release };
-      }
-    }
-    return null;
   }
 }

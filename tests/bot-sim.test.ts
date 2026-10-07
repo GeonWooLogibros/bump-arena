@@ -14,6 +14,11 @@ const SELF_WINDOW = 2;
 /** 두 공의 중심이 이 거리(m) 안이면 닿은 것으로 봅니다. */
 const TOUCH = TUNING.radius * 2 + 0.15;
 const SEEDS = [1, 2, 3, 4, 5];
+/** 기준이 한 시드 묶음에서만 우연히 맞는 일이 없도록, 서로 다른 두 묶음에서 따로 확인합니다. */
+const SEED_SETS = [
+  { name: '시드 1~5', seeds: SEEDS },
+  { name: '시드 6~10', seeds: [6, 7, 8, 9, 10] },
+];
 const COUNTS = [2, 4];
 
 /** 시드가 고정된 난수(mulberry32)입니다. */
@@ -157,7 +162,7 @@ function report(games: Game[]): string {
   return `\n${lines.join('\n')}\n`;
 }
 
-describe('AI끼리 하는 모의 경기 180판', () => {
+describe.each(SEED_SETS)('AI끼리 하는 모의 경기 180판($name)', ({ seeds }) => {
   let games: Game[] = [];
   let table = '';
 
@@ -166,7 +171,7 @@ describe('AI끼리 하는 모의 경기 180판', () => {
     MODES.forEach(({ id: mode }, m) => {
       MAPS.forEach((map, i) => {
         for (const count of COUNTS) {
-          for (const seed of SEEDS) {
+          for (const seed of seeds) {
             const random = seeded(seed * 1000 + m * 100 + i * 10 + count);
             const bots = pickSpawns(map, count, random);
             games.push(play(mode, map, { bots, limit: LIMIT }, random));

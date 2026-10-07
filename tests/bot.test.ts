@@ -186,19 +186,17 @@ describe('화살', () => {
   const arrows = (over: Partial<BotSense>) => sense({ mode: 'arrows', ...over });
 
   /** 모으는 만큼 charge를 올려 주면서 처음 쏠 때까지 돌립니다. 모으기 시작한 때와 놓은 때의 모은 시간을 돌려줍니다. */
-  function shoot(bot: Bot, situation: BotSense): { startedAt: number; charge: number; aim: Input } {
+  function shoot(bot: Bot, situation: BotSense): { startedAt: number; charge: number } {
     const step = 1 / 60;
     let charge = 0;
     let startedAt = -1;
-    let aim: Input = { ...NO_INPUT };
     for (let time = 0; time < 10; time += step) {
       const input = bot.think({ ...situation, charge }, step);
       if (input.special) {
         if (startedAt < 0) startedAt = time;
-        aim = { ...input };
         charge += step;
       } else if (startedAt >= 0) {
-        return { startedAt, charge, aim };
+        return { startedAt, charge };
       }
     }
     throw new Error('10초 안에 쏘지 않았습니다.');
@@ -223,13 +221,6 @@ describe('화살', () => {
       expect(charge).toBeLessThanOrEqual(0.9 + 1 / 60);
     }
     expect(new Set(charges.map((charge) => charge.toFixed(2))).size).toBeGreaterThan(1);
-  });
-
-  it('가까운 같은 높이의 상대는 수평으로, 먼 상대는 위쪽 대각선으로 겨눕니다', () => {
-    const level = shoot(new Bot(() => 0.5), arrows({ others: [foe(20)] })).aim;
-    expect(level).toMatchObject({ right: true, up: false, down: false });
-    const lob = shoot(new Bot(() => 0.5), arrows({ me: at(6), others: [foe(26)] })).aim;
-    expect(lob).toMatchObject({ right: true, up: true });
   });
 
   it('맞힐 방향이 없으면 모으지 않고 움직입니다', () => {

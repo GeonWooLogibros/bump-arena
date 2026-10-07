@@ -58,8 +58,8 @@ export const MAPS: readonly GameMap[] = [
     name: '그릇',
     shapes: [
       { kind: 'box', x: 16, y: 14, w: 12, h: 1 },
-      { kind: 'box', x: 7.5, y: 12.3, w: 7, h: 1, angle: 0.5 },
-      { kind: 'box', x: 24.5, y: 12.3, w: 7, h: 1, angle: -0.5 },
+      { kind: 'box', x: 7.9, y: 13.15, w: 5.5, h: 1, angle: 0.3 },
+      { kind: 'box', x: 24.1, y: 13.15, w: 5.5, h: 1, angle: -0.3 },
     ],
     spawns: [11.5, 13.3, 15.1, 16.9, 18.7, 20.5].map((x) => [x, 12.9] as const),
   },
