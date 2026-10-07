@@ -402,6 +402,9 @@ export class Multiplayer {
         // 내가 올린 값은 방에 늦게 보일 수 있으므로 내가 알고 있는 값으로 봅니다.
         state = { ...state, name: this.name, color: this.color, ready: this.ready, since: this.joinedAt };
         mine = state;
+      } else if (state.since <= 0) {
+        // 방에는 보이지만 아직 자기 상태를 올리지 않은 사람입니다. 들어온 시각을 모르므로 올릴 때까지 참가자로 보지 않습니다.
+        continue;
       }
       all.push(state);
     }

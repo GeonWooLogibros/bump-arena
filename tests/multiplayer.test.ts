@@ -69,6 +69,11 @@ class FakeHub {
     }
   }
 
+  /** 방에는 보이지만 아직 아무것도 올리지 않은 사람을 모든 방에 넣습니다. presence를 주면 그 값으로 넣습니다. */
+  addSilent(peer: string, presence: Record<string, unknown> = {}): void {
+    for (const members of this.rooms.values()) members.set(peer, { presence, kind: 'user', updatedAt: this.now });
+  }
+
   /** 사람이 아닌 참가자(게시한 세션)를 모든 방에 넣습니다. */
   addAgent(peer: string): void {
     for (const members of this.rooms.values()) members.set(peer, { presence: {}, kind: 'agent', updatedAt: this.now });
@@ -348,6 +353,75 @@ describe('색', () => {
     pass(hub, 100, host, guest);
     expect(guest.mp.lobbyView()?.myColor).toBe(5);
     expect(host.mp.lobbyView()?.takenColors).toEqual([5]);
+  });
+});
+
+describe('아직 아무것도 올리지 않은 사람', () => {
+  it('방에 보이기만 하는 사람은 참가자로 세지 않고 방장의 색도 그대로다', async () => {
+    const hub = new FakeHub();
+    const host = client(hub, 'p0');
+    await host.mp.create('방장', 0);
+    pass(hub, 100, host);
+    hub.addSilent('a0');
+    hub.addSilent('a1', { name: '반쪽', color: 0, since: 'x' });
+    const seen = frames(host);
+    pass(hub, 200, host);
+    const view = host.mp.lobbyView();
+    expect(view?.myColor).toBe(0);
+    expect(view?.rows.map((row) => row.id)).toEqual(['p0', 'bot1']);
+    expect(view?.takenColors).toEqual([]);
+    expect(view?.maxBots).toBe(5);
+    expect(view?.isHost).toBe(true);
+    expect(host.mp.players().map((p) => p.id)).toEqual(['p0', 'bot1']);
+    expect(seen.every((frame) => frame.hosting && frame.peers.length === 0)).toBe(true);
+
+    host.mp.start();
+    pass(hub, 100, host);
+    expect(host.mp.session?.match.roster).toEqual(['p0', 'bot1']);
+  });
+
+  it('아무것도 올리지 않은 사람들은 자리를 차지하지 않아서 먼저 온 사람을 밀어내지 않는다', async () => {
+    const hub = new FakeHub();
+    const all = await room(hub, 5);
+    for (let i = 0; i < 3; i++) hub.addSilent(`a${i}`);
+    pass(hub, 200, ...all);
+    for (const c of all) {
+      expect(c.mp.stage).toBe('lobby');
+      expect(c.mp.lobbyView()?.rows.map((row) => row.id)).toEqual(['p0', 'p1', 'p2', 'p3', 'p4', 'p5']);
+    }
+    expect(all[0].mp.isHost()).toBe(true);
+  });
+
+  it('혼자 들어온 방에 아무것도 올리지 않은 사람만 보이면 없는 방으로 본다', async () => {
+    const hub = new FakeHub();
+    const guest = client(hub, 'guest');
+    await guest.mp.join('abcde', '손님', 0);
+    hub.addSilent('a0');
+    pass(hub, SETTLE_MS + 100, guest);
+    expect(guest.mp.stage).toBe('idle');
+    expect(guest.mp.error).toBe('방을 찾을 수 없습니다.');
+  });
+
+  it('같은 색으로 들어온 사람이 처음에 빈 상태로 보여도 늦게 온 사람이 색을 옮긴다', async () => {
+    const hub = new FakeHub();
+    const host = client(hub, 'p0');
+    await host.mp.create('방장', 0);
+    pass(hub, 100, host);
+    hub.addSilent('p1');
+    pass(hub, 200, host);
+    expect(host.mp.lobbyView()?.myColor).toBe(0);
+
+    hub.now += 10;
+    const guest = client(hub, 'p1');
+    await guest.mp.join(host.mp.code, '손님', 0);
+    pass(hub, 200, host, guest);
+    expect(host.mp.lobbyView()?.myColor).toBe(0);
+    expect(guest.mp.lobbyView()?.myColor).toBe(1);
+    expect(host.mp.lobbyView()?.rows.map((row) => [row.id, row.color])).toEqual([
+      ['p0', 0],
+      ['p1', 1],
+      ['bot1', 2],
+    ]);
   });
 });
 
