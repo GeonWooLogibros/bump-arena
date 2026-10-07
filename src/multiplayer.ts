@@ -21,7 +21,7 @@ import type { LobbyLike, NamedRoomLike } from './net/types';
 import { encodeBall, encodeHost, readPeer } from './net/wire';
 import type { PeerState } from './net/wire';
 import type { Input, WorldEvent } from './physics/world';
-import { Session } from './session';
+import { MAX_FRAME_MS, Session } from './session';
 
 /** 경기가 진행되는 동안 내 상태를 보내는 간격(밀리초)입니다. */
 export const SEND_INTERVAL = 60;
@@ -115,6 +115,10 @@ export class Multiplayer {
   private arrived = false;
   /** 마지막으로 방을 읽었을 때 내가 방장으로 행동하고 있었는지 여부입니다. */
   private acting = false;
+  /** 사람마다 마지막으로 본 번호(n)와 그 번호가 바뀐 것을 본 시각입니다. */
+  private readonly heard = new Map<string, { n: number; at: number }>();
+  /** 화면이 보이는지 여부입니다. 가려진 화면은 멈추므로 경기 중에는 방장을 맡지 않습니다. */
+  private visible = true;
   /** 보낼 때마다 올리는 번호입니다. */
   private n = 0;
   private lastSent = 0;
@@ -224,9 +228,30 @@ export class Multiplayer {
     this.follow();
   }
 
+  /**
+   * 화면이 가려지거나 다시 보일 때 부릅니다. 경기 중에 가려지면 방장에서 바로 물러나서 다음 사람이 이어받게 합니다.
+   * 다시 보이면 평소처럼 방장을 정하므로, 그사이에 이어받은 사람이 있으면 그 사람이 계속 방장입니다.
+   */
+  setVisible(visible: boolean): void {
+    if (visible === this.visible) return;
+    this.visible = visible;
+    if (!this.room) return;
+    if (visible) {
+      this.patch({ away: null });
+    } else if (this.stage === 'game') {
+      this.acting = false;
+      this.patch({ away: true, host: null });
+    }
+  }
+
   /** 매 프레임 부릅니다. 방을 읽고, Session을 진행하고, 내 상태를 보낸 뒤 그동안 일어난 일을 돌려줍니다. */
   update(dtMs: number, input: Input): WorldEvent[] {
     if (!this.room || (this.stage !== 'lobby' && this.stage !== 'game')) return [];
+    if (dtMs > MAX_FRAME_MS) {
+      // 내 화면이 멈춰 있던 동안에는 번호가 바뀌는 것을 볼 수 없었으므로, 모두의 소식을 지금 들은 것으로 봅니다.
+      const now = this.now();
+      for (const last of this.heard.values()) last.at = now;
+    }
     const scan = this.scan();
     const session = this.current;
     const { humans, mine, host, hosting } = scan;
@@ -348,6 +373,7 @@ export class Multiplayer {
     this.joinedAt = this.now();
     this.arrived = false;
     this.acting = false;
+    this.heard.clear();
     this.n = 0;
     this.lastSent = 0;
     this.sentAlive = false;
@@ -370,9 +396,27 @@ export class Multiplayer {
     return this.created || this.now() - this.joinedAt >= SETTLE_MS;
   }
 
-  /** 경기 중에 소식이 오래 끊긴 사람인지 알려 줍니다. updatedAt은 그 사람의 상태를 마지막으로 받은 시각입니다. */
-  private gone(updatedAt: number): boolean {
-    return this.stage === 'game' && this.now() - Math.max(updatedAt, this.gameSince) > GONE_MS;
+  /**
+   * 그 사람이 올리는 번호(n)가 바뀐 것을 마지막으로 본 시각입니다. 처음 본 사람은 지금으로 봅니다.
+   * 방이 알려 주는 받은 시각(updatedAt)은 같은 값을 다시 받아도 새로워지는 방이 있어서 쓰지 않습니다.
+   */
+  private heardAt(peer: string, n: number): number {
+    let last = this.heard.get(peer);
+    if (!last || last.n !== n) {
+      last = { n, at: this.now() };
+      this.heard.set(peer, last);
+    }
+    return last.at;
+  }
+
+  /** 경기 중에 소식이 오래 끊긴 사람인지 알려 줍니다. heardAt은 그 사람의 새 소식을 마지막으로 본 시각입니다. */
+  private gone(heardAt: number): boolean {
+    return this.stage === 'game' && this.now() - Math.max(heardAt, this.gameSince) > GONE_MS;
+  }
+
+  /** 내가 방장을 맡지 않는다고 알려야 하는지 여부입니다. 화면이 가려진 채로 경기 중일 때입니다. */
+  private away(): boolean {
+    return !this.visible && this.stage === 'game';
   }
 
   private setStage(stage: Stage): void {
@@ -396,12 +440,14 @@ export class Multiplayer {
     for (const peer of this.room?.peers() ?? []) {
       // 게시한 세션이 방에 들어와 있을 수 있는데, 사람이 아니므로 뺍니다.
       if (peer.kind === 'agent') continue;
-      if (!peer.sameTab && this.gone(peer.updatedAt)) continue;
       let state = readPeer(peer.peer, peer.sameTab, peer.presence);
       if (peer.sameTab) {
         // 내가 올린 값은 방에 늦게 보일 수 있으므로 내가 알고 있는 값으로 봅니다.
-        state = { ...state, name: this.name, color: this.color, ready: this.ready, since: this.joinedAt };
+        const { name, color, ready } = this;
+        state = { ...state, name, color, ready, since: this.joinedAt, away: this.away() };
         mine = state;
+      } else if (this.gone(this.heardAt(peer.peer, state.n))) {
+        continue;
       } else if (state.since <= 0) {
         // 방에는 보이지만 아직 자기 상태를 올리지 않은 사람입니다. 들어온 시각을 모르므로 올릴 때까지 참가자로 보지 않습니다.
         continue;
@@ -415,10 +461,13 @@ export class Multiplayer {
     // 멈췄다가 돌아온 예전 방장이 경기를 되돌리지 않도록, 더 많이 진행된 경기를 올리는 사람을 방장으로 봅니다.
     // 내가 방장으로 행동하는 중이면, 방에 늦게 보이는 내 방장 정보가 아니라 지금 내 경기 상태로 견줍니다.
     const live = this.acting && this.current ? matchProgress(this.current.match) : null;
-    const seats = humans.map((p) => {
-      if (p.me && live !== null) return { ...p, hosting: true, progress: live };
-      return { ...p, hosting: p.host !== null, progress: p.host ? matchProgress(p.host) : 0 };
-    });
+    // 화면이 가려져서 물러난 사람은 방장으로 뽑지 않습니다.
+    const seats = humans
+      .filter((p) => !p.away)
+      .map((p) => {
+        if (p.me && live !== null) return { ...p, hosting: true, progress: live };
+        return { ...p, hosting: p.host !== null, progress: p.host ? matchProgress(p.host) : 0 };
+      });
     const picked = pickHost(seats);
     const hosting = mine !== null && picked === mine.peer && this.settled();
     this.acting = hosting;
@@ -471,18 +520,19 @@ export class Multiplayer {
   private publish(session: Session, hosting: boolean): void {
     const now = this.now();
     const { key, ball } = session.mine();
+    const alive = ball?.a ?? false;
+    const lobby = session.match.phase === 'lobby';
+    if (!lobby && this.sentLobby === null && now - this.lastSent < SEND_INTERVAL && alive === this.sentAlive) return;
     const host = hosting ? encodeHost(session.hostWire()) : null;
-    if (session.match.phase === 'lobby') {
-      const lobby = JSON.stringify(host);
-      if (lobby === this.sentLobby) return;
-      this.sentLobby = lobby;
+    if (lobby) {
+      const sent = JSON.stringify(host);
+      if (sent === this.sentLobby) return;
+      this.sentLobby = sent;
     } else {
-      const alive = ball?.a ?? false;
-      if (this.sentLobby === null && now - this.lastSent < SEND_INTERVAL && alive === this.sentAlive) return;
       this.sentLobby = null;
       this.sentAlive = alive;
     }
     this.lastSent = now;
-    this.patch({ key, n: ++this.n, ball: ball && encodeBall(ball), host });
+    this.patch({ key, n: ++this.n, ball: ball && encodeBall(ball), host, away: this.away() || null });
   }
 }

@@ -5,7 +5,7 @@ import { encodeBall, encodeHost, readPeer, roundKey } from '../src/net/wire';
 import type { PeerState } from '../src/net/wire';
 import { NO_INPUT } from '../src/physics/world';
 import type { BallView, Input, WorldEvent } from '../src/physics/world';
-import { MAX_FRAME_MS, NET_LEAD, Session } from '../src/session';
+import { ABSENT_GRACE_MS, MAX_FRAME_MS, NET_LEAD, Session } from '../src/session';
 import type { Frame } from '../src/session';
 
 const FRAME_MS = 16;
@@ -369,11 +369,17 @@ describe('참가자', () => {
     expect(b.match.phase).toBe('play');
   });
 
-  it('참가자 가운데 방에서 사라진 사람을 탈락시킨다', () => {
+  it('참가자 가운데 방에서 사라진 사람은 3초를 기다린 뒤에 탈락시킨다', () => {
     const made = room(['a', 'b', 'c', 'd']);
     made.run(3200);
     made.leave('d');
-    made.run(200);
+    made.run(ABSENT_GRACE_MS - 200);
+    for (const id of ['a', 'b', 'c']) {
+      expect(ball(made.get(id), 'd').alive).toBe(true);
+      expect(outs(made.events.get(id) ?? [], 'd')).toHaveLength(0);
+    }
+    expect(made.get('a').match.phase).toBe('play');
+    made.run(700);
     for (const id of ['a', 'b', 'c']) {
       expect(ball(made.get(id), 'd').alive).toBe(false);
       expect(outs(made.events.get(id) ?? [], 'd')).toHaveLength(1);
@@ -511,7 +517,7 @@ describe('play가 아닌 단계의 화살', () => {
   }
 
   it('AI가 모으던 중에 라운드가 끝나면 쏘지 않고, 결과를 보여 주는 동안 새로 쏘지도 않는다', () => {
-    // 방장 a는 구경하고 b와 AI가 겨룬다. b가 방에서 나가면 그 순간 라운드가 끝난다.
+    // 방장 a는 구경하고 b와 AI가 겨룬다. b가 탈락했다고 올리면 그 순간 라운드가 끝난다.
     const made = new Room(['a', 'b']);
     const a = made.get('a');
     a.setSettings({ bots: 1, mapSetting: 0, mode: 'arrows' });
@@ -523,7 +529,10 @@ describe('play가 아닌 단계의 화살', () => {
     expect(a.hostWire().bs.bot1.i & 16).toBe(16);
     const before = shoots(made.events.get('a')).length;
 
-    made.leave('b');
+    const last = made.states.get('b');
+    if (!last?.ball) throw new Error('b의 상태가 없습니다.');
+    made.freeze('b');
+    made.states.set('b', { ...last, ball: { ...last.ball, a: false } });
     made.run(FRAME_MS);
     expect(a.match.phase).toBe('roundEnd');
     expect(a.match.winner).toBe('bot1');
@@ -544,8 +553,8 @@ describe('play가 아닌 단계의 화살', () => {
     made.inputs.set('a', press('special'));
     made.runUntil(() => (ball(a, 'a').aim?.charge ?? 0) >= 0.3, 2000);
     made.leave('b');
-    made.run(2000);
-    expect(a.match.winner).toBe('a');
+    made.run(ABSENT_GRACE_MS + 1000);
+    expect(a.match).toMatchObject({ phase: 'roundEnd', winner: 'a' });
     expect(shoots(made.events.get('a'))).toHaveLength(0);
     expect(a.view().arrows).toHaveLength(0);
     expect(a.mine().ball).toMatchObject({ i: 0, am: null, ar: [] });
@@ -583,7 +592,7 @@ describe('방장', () => {
     const b = made.get('b');
     const c = made.get('c');
     made.hide('b');
-    made.run(200);
+    made.run(ABSENT_GRACE_MS + 200);
     made.show('b');
     // b는 자기 화면에서는 살아 있어서 화살도 쏘지만, 방장과 다른 참가자에게는 이미 탈락한 사람이다.
     made.inputs.set('b', press('special'));
@@ -635,7 +644,8 @@ describe('방장', () => {
     expect(made.host).toBe('b');
     expect(b.match).toMatchObject({ game: before.game, round: 2, phase: 'countdown', scores: before.scores });
     expect(b.match.roster).toEqual(['a', 'b', 'bot1']);
-    expect(ball(b, 'a').alive).toBe(false);
+    // 나간 사람의 공은 기다리는 시간(3초)이 지난 뒤에 탈락합니다.
+    expect(ball(b, 'a').alive).toBe(true);
 
     // 받은 경기 상태 없이도 혼자서 단계를 넘기고 AI의 입력을 정한다.
     const botX = ball(b, 'bot1').x;
@@ -649,5 +659,87 @@ describe('방장', () => {
     expect(ball(b, 'bot1').x).not.toBe(botX);
     expect(b.match).toMatchObject({ game: before.game, round: 2, scores: before.scores });
     expect(b.hostWire().bs.bot1.a).toBe(true);
+    expect(ball(b, 'a').alive).toBe(false);
+  });
+});
+
+describe('방에서 잠깐 보이지 않는 참가자', () => {
+  it('사람 셋 가운데 방장이 나간 뒤 1초 동안 아무도 보이지 않아도 새 방장은 아무도 탈락시키지 않는다', () => {
+    const made = room(['h', 'a', 'b']);
+    made.run(3200);
+    const a = made.get('a');
+    const b = made.get('b');
+    // 방을 중계하던 방장이 나가면, 먼저 이어받은 b에게는 a가 다시 연결할 때까지 방이 비어 보입니다.
+    made.setHost('b');
+    made.leave('h');
+    made.hide('a');
+    for (let ms = 0; ms < 1000; ms += FRAME_MS) {
+      made.run(FRAME_MS);
+      expect(b.match).toMatchObject({ phase: 'play', winner: null });
+      expect(ball(b, 'a').alive).toBe(true);
+      expect(ball(b, 'h').alive).toBe(true);
+    }
+    made.show('a');
+    made.run(1000);
+    for (const session of [a, b]) {
+      expect(session.match).toMatchObject({ phase: 'play', winner: null });
+      expect(ball(session, 'a').alive).toBe(true);
+      expect(ball(session, 'b').alive).toBe(true);
+    }
+    expect(outs(made.events.get('b') ?? [], 'a')).toHaveLength(0);
+
+    // 돌아오지 않은 h만 3초가 지난 뒤에 탈락하고, 남은 두 사람의 라운드는 계속됩니다.
+    made.run(ABSENT_GRACE_MS - 1500);
+    for (const id of ['a', 'b']) {
+      expect(ball(made.get(id), 'h').alive).toBe(false);
+      expect(outs(made.events.get(id) ?? [], 'h')).toHaveLength(1);
+    }
+    expect(b.match).toMatchObject({ phase: 'play', scores: { h: 0, a: 0, b: 0 } });
+  });
+
+  it('둘이 하다가 상대가 사라지면 1초 뒤에는 라운드가 계속되고 3.5초 뒤에는 남은 사람이 이긴다', () => {
+    const made = room(['a', 'b']);
+    made.run(3200);
+    const a = made.get('a');
+    made.leave('b');
+    made.run(1000);
+    expect(a.match.phase).toBe('play');
+    expect(ball(a, 'b').alive).toBe(true);
+    made.run(2500);
+    expect(ball(a, 'b').alive).toBe(false);
+    expect(a.match).toMatchObject({ phase: 'roundEnd', winner: 'a', scores: { a: 1, b: 0 } });
+  });
+
+  it('한 프레임이 0.5초보다 길면 그 시간은 보이지 않은 시간으로 세지 않는다', () => {
+    const made = room(['a', 'b']);
+    made.run(3200);
+    const a = made.get('a');
+    made.leave('b');
+    made.run(FRAME_MS);
+    a.update(20000, NO_INPUT, { hosting: true, host: null, peers: [] });
+    made.run(1000);
+    expect(ball(a, 'b').alive).toBe(true);
+    expect(a.match.phase).toBe('play');
+  });
+
+  it('라운드가 넘어가는 동안 잠깐 보이지 않은 사람도 다음 라운드에 참가한다', () => {
+    const made = room(['a', 'b', 'c']);
+    made.run(3200);
+    const a = made.get('a');
+    // b와 c는 a의 오른쪽에서 시작하므로 오른쪽으로 가면 a를 밀지 않고 떨어진다.
+    made.inputs.set('b', press('right'));
+    made.inputs.set('c', press('right'));
+    made.runUntil(() => a.match.phase === 'roundEnd');
+    made.inputs.set('b', NO_INPUT);
+    made.inputs.set('c', NO_INPUT);
+    expect(a.match.winner).toBe('a');
+    made.run(1000);
+    made.hide('b');
+    made.run(1500);
+    expect(a.match).toMatchObject({ round: 2, phase: 'countdown', roster: ['a', 'c', 'b'] });
+    made.show('b');
+    made.run(3000);
+    expect(a.match).toMatchObject({ round: 2, phase: 'play' });
+    for (const id of ['a', 'b', 'c']) expect(ball(made.get(id), 'b').alive).toBe(true);
   });
 });

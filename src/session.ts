@@ -15,6 +15,8 @@ import type { ArrowView, BallView, Input, WorldEvent } from './physics/world';
 export const NET_LEAD = 0.1;
 /** 한 프레임의 경과 시간이 이보다 길면 밀린 시간을 계산하지 않습니다(밀리초). */
 export const MAX_FRAME_MS = 500;
+/** 참가자가 방에서 보이지 않아도 이만큼은 나간 것으로 보지 않습니다(밀리초). 방을 중계하는 사람이 바뀌는 동안에는 목록이 잠깐 빕니다. */
+export const ABSENT_GRACE_MS = 3000;
 
 /** 한 프레임에 진행하는 step의 최대 수입니다. */
 const MAX_STEPS = 10;
@@ -56,6 +58,8 @@ export class Session {
   private readonly seen = new Map<string, number>();
   /** 이번 라운드 도중에 방에서 사라진 사람입니다. 다시 나타나도 다음 라운드까지는 탈락으로 봅니다. */
   private readonly gone = new Set<string>();
+  /** 참가자마다 방에서 보이지 않은 채로 지난 시간(밀리초)입니다. 다시 보이면 지웁니다. */
+  private readonly absent = new Map<string, number>();
   /** AI 공에 마지막으로 적용한 방장 소식의 번호입니다. */
   private hostSeen: number | null = null;
 
@@ -98,7 +102,10 @@ export class Session {
     }
     if (frame.hosting) {
       if (this.current.phase !== 'lobby') {
-        const present = this.withBots([this.me, ...frame.peers.map((p) => p.peer)]);
+        const here = frame.peers.map((p) => p.peer);
+        // 잠깐 보이지 않는 참가자는 아직 방에 있는 것으로 보고 다음 라운드에도 넣습니다.
+        const waiting = [...this.absent.keys()].filter((id) => !here.includes(id));
+        const present = this.withBots([this.me, ...here, ...waiting]);
         this.current = advance(this.current, dt, this.alive(frame.peers), present, this.random);
       }
     } else if (frame.host) {
@@ -110,7 +117,7 @@ export class Session {
     if (!world) return [];
 
     const events: WorldEvent[] = [];
-    this.applyRemote(world, frame, events);
+    this.applyRemote(world, frame, dt, events);
     const { phase } = this.current;
     this.input = phase === 'play' ? { ...input } : NO_INPUT;
     world.setInput(this.me, this.input);
@@ -165,14 +172,18 @@ export class Session {
     return [...people, ...botIds(Math.min(this.current.settings.bots, MAX_PLAYERS - people.length))];
   }
 
-  /** 방장이 보는 생존자입니다. 나와 AI는 내 세계에서, 다른 사람은 그 사람이 올린 상태에서 판단합니다. */
+  /**
+   * 방장이 보는 생존자입니다. 나와 AI는 내 세계에서, 다른 사람은 그 사람이 올린 상태에서 판단합니다.
+   * 방에서 잠깐 보이지 않는 사람은 나간 것으로 정해지기 전까지 생존으로 봅니다.
+   */
   private alive(peers: readonly PeerState[]): string[] {
     const world = this.world;
     if (!world) return [];
     return this.current.roster.filter((id) => {
       if (id === this.me || isBot(id)) return world.alive(id);
-      const peer = this.gone.has(id) ? undefined : peers.find((p) => p.peer === id);
-      return peer !== undefined && (peer.key !== this.key || peer.ball?.a === true);
+      if (this.gone.has(id)) return false;
+      const peer = peers.find((p) => p.peer === id);
+      return peer === undefined || peer.key !== this.key || peer.ball?.a === true;
     });
   }
 
@@ -188,6 +199,7 @@ export class Session {
     this.gone.clear();
     this.hostSeen = null;
     if (phase === 'lobby') {
+      this.absent.clear();
       this.world = null;
       this.map = null;
       this.assignBots();
@@ -216,15 +228,27 @@ export class Session {
     }
   }
 
-  /** 받은 상태로 다른 사람의 공과 (방장이 아닐 때의) AI 공을 맞춥니다. */
-  private applyRemote(world: World, frame: Frame, events: WorldEvent[]): void {
+  /**
+   * 받은 상태로 다른 사람의 공과 (방장이 아닐 때의) AI 공을 맞춥니다.
+   * 방에서 보이지 않는 참가자는 ABSENT_GRACE_MS가 지난 뒤에 탈락시키고, 그동안에는 마지막 입력으로 계속 움직이게 둡니다.
+   */
+  private applyRemote(world: World, frame: Frame, dt: number, events: WorldEvent[]): void {
     for (const id of this.current.roster) {
       if (id === this.me || isBot(id) || this.gone.has(id)) continue;
       const peer = frame.peers.find((p) => p.peer === id);
       if (!peer) {
+        const waited = (this.absent.get(id) ?? 0) + dt;
+        if (waited < ABSENT_GRACE_MS) {
+          this.absent.set(id, waited);
+          continue;
+        }
+        this.absent.delete(id);
         this.gone.add(id);
         this.eliminate(world, id, events);
-      } else if (peer.key === this.key && peer.ball) {
+        continue;
+      }
+      this.absent.delete(id);
+      if (peer.key === this.key && peer.ball) {
         this.follow(world, id, peer.ball, peer.n !== this.seen.get(id), events);
         this.seen.set(id, peer.n);
       }

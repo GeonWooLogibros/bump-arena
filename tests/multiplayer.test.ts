@@ -5,13 +5,17 @@ import type { LobbyLike, NamedRoomLike, PeerLike } from '../src/net/types';
 import { NO_INPUT } from '../src/physics/world';
 import type { BallView, Input, WorldEvent } from '../src/physics/world';
 import type { Settings } from '../src/game/round';
+import { ABSENT_GRACE_MS } from '../src/session';
 import type { Frame } from '../src/session';
 
 const FRAME_MS = 16;
 
-type Member = { presence: Record<string, unknown>; kind: string; updatedAt: number };
+type Member = { presence: Record<string, unknown>; kind: string };
 
-/** 메모리 안에서만 동작하는 방입니다. 시계를 직접 움직여서 시간에 따른 동작을 확인합니다. */
+/**
+ * 메모리 안에서만 동작하는 방입니다. 시계를 직접 움직여서 시간에 따른 동작을 확인합니다.
+ * 실제 P2P 방처럼 받은 시각(updatedAt)은 읽을 때마다 지금으로 돌려주므로, 소식이 끊겼는지는 그것으로 알 수 없습니다.
+ */
 class FakeHub {
   now = 1000;
   readonly rooms = new Map<string, Map<string, Member>>();
@@ -27,7 +31,7 @@ class FakeHub {
       join(name: string): Promise<NamedRoomLike> {
         const members = hub.rooms.get(name) ?? new Map<string, Member>();
         hub.rooms.set(name, members);
-        members.set(peer, { presence: {}, kind: 'user', updatedAt: hub.now });
+        members.set(peer, { presence: {}, kind: 'user' });
         return Promise.resolve({
           presence(patch: Record<string, unknown>): Promise<void> {
             hub.sends.set(peer, [...(hub.sends.get(peer) ?? []), hub.now]);
@@ -38,7 +42,7 @@ class FakeHub {
               if (value === null) delete next[key];
               else next[key] = JSON.parse(JSON.stringify(value));
             }
-            members.set(peer, { ...entry, presence: next, updatedAt: hub.now });
+            members.set(peer, { ...entry, presence: next });
             return Promise.resolve();
           },
           peers: (): PeerLike[] =>
@@ -47,7 +51,7 @@ class FakeHub {
               sameTab: key === peer,
               kind: entry.kind,
               presence: entry.presence,
-              updatedAt: entry.updatedAt,
+              updatedAt: hub.now,
             })),
           onPeers: () => () => undefined,
           leave(): Promise<void> {
@@ -65,18 +69,18 @@ class FakeHub {
       const entry = members.get(peer);
       if (!entry) continue;
       const presence = { ...entry.presence, n: Number(entry.presence.n) + 1 };
-      members.set(peer, { ...entry, presence, updatedAt: this.now });
+      members.set(peer, { ...entry, presence });
     }
   }
 
   /** 방에는 보이지만 아직 아무것도 올리지 않은 사람을 모든 방에 넣습니다. presence를 주면 그 값으로 넣습니다. */
   addSilent(peer: string, presence: Record<string, unknown> = {}): void {
-    for (const members of this.rooms.values()) members.set(peer, { presence, kind: 'user', updatedAt: this.now });
+    for (const members of this.rooms.values()) members.set(peer, { presence, kind: 'user' });
   }
 
   /** 사람이 아닌 참가자(게시한 세션)를 모든 방에 넣습니다. */
   addAgent(peer: string): void {
-    for (const members of this.rooms.values()) members.set(peer, { presence: {}, kind: 'agent', updatedAt: this.now });
+    for (const members of this.rooms.values()) members.set(peer, { presence: {}, kind: 'agent' });
   }
 }
 
@@ -539,12 +543,15 @@ describe('경기 중', () => {
     host.mp.leave();
     pass(hub, 100, guest);
     expect(guest.mp.isHost()).toBe(true);
-    expect(ball(guest, 'p0').alive).toBe(false);
+    expect(ball(guest, 'p0').alive).toBe(true);
     const before = ball(guest, 'bot1').x;
     pass(hub, 1500, guest);
     expect(guest.mp.session?.match.phase).toBe('play');
     expect(ball(guest, 'bot1').x).not.toBe(before);
     expect(guest.mp.session?.hostWire().bs.bot1).toBeDefined();
+    // 나간 방장의 공은 기다리는 시간(3초)이 지난 뒤에 탈락합니다.
+    pass(hub, ABSENT_GRACE_MS - 1500, guest);
+    expect(ball(guest, 'p0').alive).toBe(false);
   });
 
   it('손님의 화면에서 방장의 공과 AI가 받은 상태를 따라 움직인다', async () => {
@@ -679,6 +686,90 @@ describe('Session에 넘기는 Frame', () => {
     expect(guest.mp.stage).toBe('game');
     expect(guest.mp.session?.match).toMatchObject({ game: 1, round: 2, scores });
     expect(guest.mp.players().map((p) => p.id)).toEqual(['p1']);
+  });
+});
+
+describe('내 화면이 멈췄다가 돌아왔을 때', () => {
+  it('20초 만에 온 프레임에서 다른 사람을 나간 것으로 보지 않는다', async () => {
+    const hub = new FakeHub();
+    const { host, guest } = await startedPair(hub, 1);
+    pass(hub, 500, host, guest);
+    const seen = frames(host);
+    // 그동안 아무 소식도 새로 받지 못했더라도, 멈춰 있던 것은 나이므로 상대가 조용했던 것으로 세지 않습니다.
+    hub.now += 20000;
+    host.events.push(...host.mp.update(20000, host.input));
+    expect(seen.at(-1)?.peers.map((p) => p.peer)).toEqual(['p1']);
+    expect(host.mp.players().map((p) => p.id)).toEqual(['p0', 'p1', 'bot1']);
+    pass(hub, 9000, host);
+    expect(seen.every((frame) => frame.peers.some((p) => p.peer === 'p1'))).toBe(true);
+    pass(hub, 2000, host);
+    expect(seen.at(-1)?.peers).toEqual([]);
+  });
+});
+
+describe('경기 중에 방장의 화면이 가려질 때', () => {
+  const presence = (hub: FakeHub, peer: string): Record<string, unknown> | undefined =>
+    [...hub.rooms.values()][0].get(peer)?.presence;
+
+  it('방장이 바로 물러나서 다음 사람이 몇 프레임 안에 방장이 되고, 다시 보여도 새 방장이 그대로다', async () => {
+    const hub = new FakeHub();
+    const { host, guest } = await startedPair(hub, 1);
+    pass(hub, 3500, host, guest);
+    expect(host.mp.isHost()).toBe(true);
+
+    host.mp.setVisible(false);
+    expect(host.mp.isHost()).toBe(false);
+    expect(presence(hub, 'p0')).toMatchObject({ away: true });
+    expect(presence(hub, 'p0')?.host).toBeUndefined();
+    pass(hub, FRAME_MS * 3, guest);
+    expect(guest.mp.isHost()).toBe(true);
+    const ms = guest.mp.session?.match.ms ?? 0;
+    pass(hub, 1000, guest);
+    expect(guest.mp.session?.match).toMatchObject({ game: 1, round: 1, phase: 'play' });
+    expect(guest.mp.session?.match.ms).toBeGreaterThan(ms + 900);
+    expect(guest.mp.players().map((p) => p.id)).toEqual(['p0', 'p1', 'bot1']);
+
+    host.mp.setVisible(true);
+    expect(presence(hub, 'p0')?.away).toBeUndefined();
+    pass(hub, 300, host, guest);
+    expect(host.mp.isHost()).toBe(false);
+    expect(guest.mp.isHost()).toBe(true);
+    expect(host.mp.session?.match).toMatchObject({ game: 1, round: 1, phase: 'play' });
+    expect(ball(guest, 'p0').alive).toBe(true);
+  });
+
+  it('가려진 화면이 계속 움직여도 방장을 다시 맡지 않고, 이어받을 사람이 없으면 다시 보일 때 방장으로 돌아온다', async () => {
+    const hub = new FakeHub();
+    const { host, guest } = await startedPair(hub, 1);
+    host.mp.setVisible(false);
+    pass(hub, 500, host, guest);
+    expect(host.mp.isHost()).toBe(false);
+    expect(guest.mp.isHost()).toBe(true);
+    expect(presence(hub, 'p0')?.host).toBeUndefined();
+
+    guest.mp.setVisible(false);
+    pass(hub, 100, host, guest);
+    expect([host.mp.isHost(), guest.mp.isHost()]).toEqual([false, false]);
+    guest.mp.setVisible(true);
+    pass(hub, 100, host, guest);
+    expect([host.mp.isHost(), guest.mp.isHost()]).toEqual([false, true]);
+  });
+
+  it('대기실에서는 화면이 가려져도 방장이 바뀌지 않는다', async () => {
+    const hub = new FakeHub();
+    const [host, guest] = await room(hub, 1);
+    host.mp.setVisible(false);
+    pass(hub, 200, guest);
+    expect(presence(hub, 'p0')?.away).toBeUndefined();
+    expect(guest.mp.isHost()).toBe(false);
+    expect(guest.mp.lobbyView()?.rows.map((row) => [row.id, row.host])).toEqual([
+      ['p0', true],
+      ['p1', false],
+      ['bot1', false],
+    ]);
+    host.mp.setVisible(true);
+    pass(hub, 200, host, guest);
+    expect(host.mp.isHost()).toBe(true);
   });
 });
 

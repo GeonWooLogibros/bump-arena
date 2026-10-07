@@ -52,6 +52,8 @@ export interface PeerState {
   n: number;
   ball: BallWire | null;
   host: HostWire | null;
+  /** 화면이 가려져 있어서 방장을 맡지 않는다고 알린 사람인지 여부. */
+  away: boolean;
 }
 
 type Dict = Record<string, unknown>;
@@ -196,7 +198,7 @@ export function decodeHost(value: unknown): HostWire | null {
   };
 }
 
-/** presence를 읽습니다. 잘못된 값은 기본값(이름 '플레이어', 색 0, 준비 안 함, since 0, key 0, ball null, host null)으로 바꿉니다. */
+/** presence를 읽습니다. 잘못된 값은 기본값(이름 '플레이어', 색 0, 준비 안 함, since 0, key 0, ball null, host null, away 아님)으로 바꿉니다. */
 export function readPeer(peer: string, me: boolean, presence: Readonly<Record<string, unknown>>): PeerState {
   const color = presence.color;
   return {
@@ -210,5 +212,6 @@ export function readPeer(peer: string, me: boolean, presence: Readonly<Record<st
     n: whole(presence.n, Number.MAX_SAFE_INTEGER),
     ball: decodeBall(presence.ball),
     host: decodeHost(presence.host),
+    away: presence.away === true,
   };
 }

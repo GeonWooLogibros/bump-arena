@@ -146,6 +146,7 @@ describe('readPeer', () => {
   it('빈 presence는 기본값입니다', () => {
     expect(readPeer('p', false, {})).toEqual({
       peer: 'p', me: false, name: '플레이어', color: 0, ready: false, since: 0, key: 0, n: 0, ball: null, host: null,
+      away: false,
     });
   });
 
@@ -154,6 +155,8 @@ describe('readPeer', () => {
     expect(readPeer('p', false, { name: 5 }).name).toBe('플레이어');
     for (const since of [NaN, Infinity, -Infinity]) expect(readPeer('p', false, { since }).since).toBe(0);
     expect(readPeer('p', false, { ready: 'yes' }).ready).toBe(false);
+    expect(readPeer('p', false, { away: 1 }).away).toBe(false);
+    expect(readPeer('p', false, { away: true }).away).toBe(true);
   });
 
   it('올바른 값은 그대로 읽습니다', () => {
