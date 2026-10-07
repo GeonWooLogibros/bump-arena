@@ -99,9 +99,10 @@ export function spawnSlot(index: number, round: number): number {
   return (index + round) % 6;
 }
 
-/** setting이 RANDOM_MAP이면 previous와 다른 맵을, 아니면 setting을 돌려줍니다. */
+/** setting이 RANDOM_MAP이면 previous와 다른 맵을, 아니면 setting을 돌려줍니다. previous가 맵 번호가 아니면(첫 라운드) 모든 맵이 후보입니다. */
 export function nextMap(setting: number, previous: number, random: () => number): number {
   if (setting !== RANDOM_MAP) return setting;
+  if (previous < 0 || previous >= MAPS.length) return Math.floor(random() * MAPS.length);
   const pick = Math.floor(random() * (MAPS.length - 1));
   return pick >= previous ? pick + 1 : pick;
 }

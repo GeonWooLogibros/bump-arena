@@ -60,6 +60,17 @@ describe('nextMap', () => {
     expect(nextMap(RANDOM_MAP, 2, () => 0.999999)).toBe(5);
   });
 
+  it('직전 맵이 없으면(-1) 0번을 포함한 모든 맵이 나옵니다', () => {
+    expect(nextMap(RANDOM_MAP, -1, () => 0)).toBe(0);
+    const seen = new Set<number>();
+    for (let i = 0; i < 60; i++) seen.add(nextMap(RANDOM_MAP, -1, () => i / 60));
+    expect([...seen].sort()).toEqual([0, 1, 2, 3, 4, 5]);
+  });
+
+  it('직전 맵이 2번이면 2번이 나오지 않습니다', () => {
+    for (let i = 0; i < 60; i++) expect(nextMap(RANDOM_MAP, 2, () => i / 60)).not.toBe(2);
+  });
+
   it('고른 맵이 있으면 그대로 씁니다', () => {
     expect(nextMap(3, 3, () => 0.5)).toBe(3);
   });
