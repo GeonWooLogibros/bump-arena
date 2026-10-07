@@ -3,7 +3,7 @@ import type { Body, Fixture } from 'planck';
 import type { GameMap, Shape } from '../game/maps';
 import { TUNING } from '../game/modes';
 import type { Mode } from '../game/modes';
-import { Arrows } from './arrows';
+import { ARROW_MUZZLE, Arrows, arrowSpeed } from './arrows';
 import type { ArrowShot, ArrowView } from './arrows';
 import { closestAbove, corners } from './geometry';
 import type { Point } from './geometry';
@@ -419,11 +419,9 @@ export class World {
     entry.charge = 0;
     entry.aim = null;
     if (!release || charge < TUNING.arrowMinCharge - 1e-9) return;
-    const span = TUNING.arrowMaxCharge - TUNING.arrowMinCharge;
-    const ratio = Math.min(1, (charge - TUNING.arrowMinCharge) / span);
-    const speed = TUNING.arrowMinSpeed + (TUNING.arrowMaxSpeed - TUNING.arrowMinSpeed) * ratio;
+    const speed = arrowSpeed(charge);
     const p = body.getPosition();
-    const gap = TUNING.radius + 0.2;
+    const gap = ARROW_MUZZLE;
     const stuck = this.arrowList.launch(
       id,
       [p.x, p.y],

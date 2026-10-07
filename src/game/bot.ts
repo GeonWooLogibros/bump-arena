@@ -209,7 +209,7 @@ function settles(me: Me, ledge: Ledge, time: number): boolean {
  */
 export class Bot {
   private held: Input = { ...NO_INPUT };
-  private elapsed = THINK_INTERVAL;
+  private elapsed: number;
   /** 생각하기 시작한 뒤 지난 시간(초)입니다. AI는 play 단계에서만 생각하므로 라운드가 시작된 뒤의 시간과 같습니다. */
   private clock = 0;
   private targetId: string | null = null;
@@ -247,6 +247,8 @@ export class Bot {
   constructor(private readonly random: () => number = Math.random) {
     this.nextShotAt = this.between(FIRST_SHOT_MIN, FIRST_SHOT_MAX);
     this.lastChanceAt = this.nextShotAt;
+    // 여러 AI가 같은 프레임에 한꺼번에 생각하지 않도록 처음 생각하는 때를 서로 어긋나게 합니다.
+    this.elapsed = this.between(0, THINK_INTERVAL);
   }
 
   /**

@@ -218,6 +218,18 @@ describe.each(SEED_SETS)('AI끼리 하는 모의 경기 180판($name)', ({ seeds
   });
 });
 
+describe('같은 시드로 다시 돌리기', () => {
+  it.each(MODES.map((m) => m.id))('%s: 같은 시드의 경기는 승자, 길이, 탈락 순서가 모두 같다', (mode) => {
+    for (const map of MAPS) {
+      const once = () => {
+        const random = seeded(4242);
+        return play(mode, map, { bots: pickSpawns(map, 4, random), limit: LIMIT }, random);
+      };
+      expect(once()).toEqual(once());
+    }
+  });
+});
+
 describe('가만히 있는 공과 AI 1명', () => {
   const flat = MAPS[0];
   /** 평지 맵 가운데입니다. */

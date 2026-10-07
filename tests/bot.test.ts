@@ -67,8 +67,22 @@ describe('움직임', () => {
     expect(near.left).toBe(true);
   });
 
+  it('처음 생각하는 때가 AI마다 달라서 같은 프레임에 몰리지 않습니다', () => {
+    const right = sense({ others: [foe(22)] });
+    /** 1/60초씩 진행했을 때 처음으로 입력을 고른 프레임 번호입니다. */
+    const firstFrame = (random: () => number): number => {
+      const bot = new Bot(random);
+      for (let frame = 1; frame <= 20; frame++) if (bot.think(right, 1 / 60).right) return frame;
+      return -1;
+    };
+    expect(firstFrame(() => 0.999)).toBe(1);
+    expect(firstFrame(() => 0.5)).toBe(5);
+    expect(firstFrame(() => 0)).toBe(9);
+  });
+
   it('0.15초마다 한 번만 입력을 바꿉니다', () => {
-    const bot = new Bot(() => 0.5);
+    // 난수가 가장 클 때는 첫 호출에서 바로 생각합니다.
+    const bot = new Bot(() => 0.999);
     const right = sense({ others: [foe(22)] });
     const left = sense({ others: [foe(10)] });
     const first = bot.think(right, 0.05);

@@ -49,6 +49,16 @@ interface Arrow {
   angle: number;
 }
 
+/** 화살이 공 중심에서 이만큼(m) 떨어진 곳에서 출발합니다. */
+export const ARROW_MUZZLE = TUNING.radius + 0.2;
+
+/** charge초 동안 모았을 때의 화살 속력(m/s)입니다. 모을 수 있는 범위를 벗어나면 양 끝 값입니다. */
+export function arrowSpeed(charge: number): number {
+  const span = TUNING.arrowMaxCharge - TUNING.arrowMinCharge;
+  const ratio = Math.max(0, Math.min(1, (charge - TUNING.arrowMinCharge) / span));
+  return TUNING.arrowMinSpeed + (TUNING.arrowMaxSpeed - TUNING.arrowMinSpeed) * ratio;
+}
+
 /** 부동소수점 누적 오차 때문에 시간 비교가 한 step 어긋나는 일을 막습니다. */
 const EPS = 1e-9;
 

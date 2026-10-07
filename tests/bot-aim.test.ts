@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { aimShot, arrowSpeed, closest } from '../src/game/bot-aim';
+import { aimShot, closest } from '../src/game/bot-aim';
+import { arrowSpeed } from '../src/physics/arrows';
 import { MAPS } from '../src/game/maps';
 import type { GameMap } from '../src/game/maps';
 
