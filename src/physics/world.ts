@@ -106,10 +106,11 @@ interface Rope {
   mover: Body | null;
 }
 
-/** 움직이는 발판 하나입니다. shape는 제자리에 있을 때의 모양입니다. */
+/** 움직이는 발판 하나입니다. shape는 제자리에 있을 때의 모양이고, reach는 한 step에 속도로 따라잡는 가장 먼 거리(m)입니다. */
 interface Mover {
   shape: Extract<Shape, { kind: 'box' }>;
   body: Body;
+  reach: number;
 }
 
 /** 공 하나의 물리 상태와 조작을 담습니다. */
@@ -128,9 +129,10 @@ interface Entry {
   cooldown: number;
   facing: 1 | -1;
   aimDir: Point;
-  /** 지금 딛고 있는 움직이는 발판과, 지난 step에 그 발판이 움직이던 가로 속도입니다. */
+  /** 지금 딛고 있는 움직이는 발판과, 지난 step에 그 발판이 움직이던 속도입니다. */
   ride: Body | null;
   rideVx: number;
+  rideVy: number;
   x: number;
   y: number;
   angle: number;
@@ -152,8 +154,11 @@ const BOUNDS = {
   bottom: TUNING.viewH + TUNING.boundsMargin,
 };
 
-/** 움직이는 발판이 가야 할 곳과 이보다 멀리 떨어져 있으면 속도를 주지 않고 바로 옮깁니다(m). 경기 도중에 들어왔을 때 쓰입니다. */
-const MOVER_SNAP = 0.5;
+/**
+ * 움직이는 발판이 가야 할 곳까지의 거리가 '가장 빠를 때 한 step에 가는 거리'의 이 배수를 넘으면, 속도로 따라잡지 않고 딛고 있는 공과 함께 바로 옮깁니다.
+ * 시간이 한꺼번에 흐르거나 뒤로 갔을 때 발판이 한 step 동안 빠르게 움직여 위에 탄 공을 쏘아 올리지 않게 합니다.
+ */
+const MOVER_CHASE = 1.5;
 
 /** 움직이는 발판에 건 줄의 고정점이 받은 위치와 이만큼 어긋나도 같은 줄로 봅니다(m). 발판이 통신 지연 동안 움직이는 거리보다 넉넉합니다. */
 const MOVER_SLACK = 0.4;
@@ -217,7 +222,8 @@ export class World {
       }
       const body = this.world.createKinematicBody({ position: Vec2(shape.x, shape.y), angle: shape.angle ?? 0 });
       body.createFixture(new Box(shape.w / 2, shape.h / 2), surface(shape));
-      this.movers.push({ shape, body });
+      const top = (Math.PI * Math.hypot(shape.move.dx, shape.move.dy)) / shape.move.period;
+      this.movers.push({ shape, body, reach: MOVER_CHASE * top * TUNING.step });
     }
     this.world.on('pre-solve', (contact) => {
       const a = contact.getFixtureA();
@@ -265,6 +271,7 @@ export class World {
       aimDir: [1, 0],
       ride: null,
       rideVx: 0,
+      rideVy: 0,
       x,
       y,
       angle: 0,
@@ -512,20 +519,33 @@ export class World {
     events.push({ type: 'out', id, x: entry.x, y: entry.y, cause: 'arrow' });
   }
 
-  /** 움직이는 발판을 clock초의 위치로 보냅니다. 위치는 매번 시간에서 새로 구하므로 오차가 쌓이지 않습니다. */
+  /**
+   * 움직이는 발판을 clock초의 위치로 보냅니다. 위치는 매번 시간에서 새로 구하므로 오차가 쌓이지 않습니다.
+   * 가까우면 이번 step의 속도로 보내고, 멀면 한 step 전의 위치로 바로 옮긴 뒤 평소 속도로 보냅니다.
+   * 바로 옮길 때에는 그 발판을 딛고 있는 공도 같은 만큼 옮깁니다. 발판의 속도가 바뀐 만큼은 carry가 공에 더합니다.
+   */
   private moveTo(clock: number): void {
-    for (const { shape, body } of this.movers) {
+    for (const { shape, body, reach } of this.movers) {
       if (!shape.move) continue;
       const [ox, oy] = moveOffset(shape.move, clock);
       const p = body.getPosition();
-      const dx = shape.x + ox - p.x;
-      const dy = shape.y + oy - p.y;
-      if (Math.hypot(dx, dy) > MOVER_SNAP) {
-        body.setTransform(Vec2(shape.x + ox, shape.y + oy), body.getAngle());
-        body.setLinearVelocity(Vec2(0, 0));
-      } else {
-        body.setLinearVelocity(Vec2(dx / TUNING.step, dy / TUNING.step));
+      let dx = shape.x + ox - p.x;
+      let dy = shape.y + oy - p.y;
+      if (Math.hypot(dx, dy) > reach) {
+        const [bx, by] = moveOffset(shape.move, clock - TUNING.step);
+        const sx = shape.x + bx - p.x;
+        const sy = shape.y + by - p.y;
+        dx = ox - bx;
+        dy = oy - by;
+        for (const entry of this.entries.values()) {
+          const ball = entry.body;
+          if (!entry.alive || !ball || this.riding(ball) !== body) continue;
+          const at = ball.getPosition();
+          ball.setTransform(Vec2(at.x + sx, at.y + sy), ball.getAngle());
+        }
+        body.setTransform(Vec2(shape.x + bx, shape.y + by), body.getAngle());
       }
+      body.setLinearVelocity(Vec2(dx / TUNING.step, dy / TUNING.step));
     }
   }
 
@@ -547,19 +567,25 @@ export class World {
   /**
    * 움직이는 발판을 딛고 있는 공을 발판과 함께 움직입니다. 공은 구르기 때문에 마찰만으로는 발판을 따라가지 못합니다.
    * 발판의 속도가 바뀐 만큼을 공에 그대로 더하고, 좌우를 누르지 않는 동안에는 발판과의 속도 차를 줄입니다.
+   * 세로 속도도 같이 더하므로, 발판이 갑자기 서거나 방향을 바꿔도 공이 발판에서 튀어 오르지 않습니다.
    */
   private carry(entry: Entry, body: Body): void {
     const ride = this.riding(body);
     if (ride) {
       const v = body.getLinearVelocity();
-      const rideVx = ride.getLinearVelocity().x;
+      const { x: rideVx, y: rideVy } = ride.getLinearVelocity();
       let vx = v.x;
-      if (ride === entry.ride) vx += rideVx - entry.rideVx;
+      let vy = v.y;
+      if (ride === entry.ride) {
+        vx += rideVx - entry.rideVx;
+        vy += rideVy - entry.rideVy;
+      }
       // 공기 저항은 발판에 대한 속도에만 걸리도록, 발판의 속도에 걸릴 몫을 미리 돌려줍니다.
       vx += rideVx * TUNING.damping * TUNING.step;
       if (entry.input.left === entry.input.right) vx -= (vx - rideVx) * RIDE_GRIP * TUNING.step;
-      if (vx !== v.x) body.setLinearVelocity(Vec2(vx, v.y));
+      if (vx !== v.x || vy !== v.y) body.setLinearVelocity(Vec2(vx, vy));
       entry.rideVx = rideVx;
+      entry.rideVy = rideVy;
     }
     entry.ride = ride;
   }

@@ -162,6 +162,39 @@ describe('움직이는 발판', () => {
     expect(world.state('a')!.y).toBeCloseTo(13, 1);
   });
 
+  it.each([0.02, 0.05, 0.1, 0.2, 0.3, 0.4, -0.02, -0.05, -0.1, -0.2, -0.3, -0.4])(
+    '시간이 %f초 튀어도 세로로 움직이는 발판에 탄 공이 떠오르거나 묻히지 않습니다',
+    (jump) => {
+      // 1.25초에는 발판이 가장 빠르게 올라가고 3.75초에는 가장 빠르게 내려갑니다.
+      for (const from of [1.25, 3.75]) {
+        const world = new World(mapOf(LIFT), 'classic');
+        world.addBall('a', 16, 12.9, true);
+        let time = 0;
+        while (time < from) world.step((time += TUNING.step));
+        time += jump;
+        for (let i = 0; i < 180; i++) {
+          world.step((time += TUNING.step));
+          expect(world.alive('a')).toBe(true);
+          const gap = center(world)[1] - 0.5 - (world.state('a')!.y + TUNING.radius);
+          expect(gap).toBeLessThan(0.3);
+          expect(gap).toBeGreaterThan(-0.3);
+        }
+      }
+    },
+  );
+
+  it('발판을 바로 옮길 때 가로로 움직이는 발판에 탄 공도 함께 옮깁니다', () => {
+    const world = new World(mapOf(FERRY), 'classic');
+    world.addBall('a', 10, 11.9, true);
+    for (let i = 1; i <= 90; i++) world.step(i * TUNING.step);
+    const before = world.state('a')!.x - center(world)[0];
+    // 1.5초 뒤로 건너뜁니다. 발판은 3m쯤 옮겨집니다.
+    for (let i = 1; i <= 30; i++) world.step(3 + i * TUNING.step);
+    expect(center(world)[0]).toBeGreaterThan(15);
+    expect(Math.abs(world.state('a')!.x - center(world)[0] - before)).toBeLessThan(0.3);
+    expect(world.state('a')!.y).toBeCloseTo(12, 1);
+  });
+
   it('움직이는 발판 위에서도 뛸 수 있습니다', () => {
     const world = new World(mapOf(FERRY), 'classic');
     world.addBall('a', 10, 11.9, true);
@@ -243,7 +276,8 @@ describe('튕기는 발판', () => {
       world.step();
       top = Math.min(top, world.state('a')!.y);
     }
-    expect(top).toBeGreaterThan(4);
+    // 튕겨 나가는 속력의 한도(12m/s)로 오르는 높이는 3.6m이므로, 공의 중심은 y 8.4 위로 가지 않습니다.
+    expect(top).toBeGreaterThan(7);
   });
 });
 
