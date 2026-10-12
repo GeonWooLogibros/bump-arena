@@ -9,6 +9,7 @@ import type { ArrowView, BallView } from '../physics/world';
 import type { SessionView } from '../session';
 import { SHARD_LIFE } from './effects';
 import type { Effects } from './effects';
+import { drawHints, hintOpacity, hintRows } from './hints';
 
 /** 화면 px = 세계 m × scale + offset 입니다. */
 export interface ViewBox {
@@ -401,6 +402,8 @@ export function drawScene(
     players: PlayerInfo[];
     effects: Effects;
     time: number;
+    /** 키보드 조작 안내를 그릴지 여부. 터치 버튼을 보여 주는 기기에서는 false입니다. */
+    hints?: boolean;
   },
 ): void {
   const box = fitView(s.width, s.height);
@@ -457,4 +460,13 @@ export function drawScene(
   outlined(ctx, `${view.match.round} 라운드 · ${map.name} · ${mode}`, offsetX + 12 * u, infoY, TEXT_DIM, 3 * u);
 
   drawMessages(ctx, view, rows, box, u);
+  if (s.hints && !view.watching) {
+    drawHints(ctx, hintRows(view.match.settings.mode), {
+      left: offsetX + 12 * u,
+      bottom: offsetY + TUNING.viewH * scale - 10 * u,
+      u,
+      font: FONT,
+      alpha: hintOpacity(view.match.phase, view.match.ms),
+    });
+  }
 }

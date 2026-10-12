@@ -64,7 +64,7 @@ function button(label: string, onClick: () => void, className = 'btn'): HTMLButt
   const node = el('button', className, label);
   node.type = 'button';
   node.addEventListener('click', () => {
-    // 초점이 버튼에 남아 있으면 스페이스가 특수 동작 대신 이 버튼을 다시 누르게 됩니다.
+    // 초점이 버튼에 남아 있으면 스페이스가 뛰기 대신 이 버튼을 다시 누르게 됩니다.
     node.blur();
     onClick();
   });
@@ -181,9 +181,11 @@ export function createMenus(root: HTMLElement, actions: MenuActions): { show(vie
 
     const guide = el('dl', 'guide');
     guide.append(
-      el('dt', '', '방향키 또는 WASD'),
-      el('dd', '', '이동과 뛰기'),
-      el('dt', '', 'X 또는 스페이스'),
+      el('dt', '', '← → 또는 A D'),
+      el('dd', '', '이동'),
+      el('dt', '', '스페이스 또는 ↑ W'),
+      el('dd', '', '뛰기'),
+      el('dt', '', 'X 또는 Shift'),
       el('dd', '', '특수 동작'),
     );
     panel.append(guide);

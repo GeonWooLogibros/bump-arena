@@ -171,7 +171,7 @@ function react(events: readonly WorldEvent[], view: SessionView | null, players:
   if (phase !== lastPhase) {
     if (phase === 'play') {
       if (lastPhase === 'countdown') audio.play('go', 0.8);
-      // 버튼에 초점이 남아 있으면 스페이스가 그 버튼을 누르므로 초점을 풉니다.
+      // 버튼에 초점이 남아 있으면 뛰려고 누른 스페이스가 그 버튼을 누르므로 초점을 풉니다.
       if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
     } else if (phase === 'roundEnd' && view?.match.winner) {
       // 경기를 끝내는 승리이면 크게 냅니다. 이어지는 matchEnd에서는 다시 내지 않습니다.
@@ -244,8 +244,9 @@ function frame(time: number): void {
     effects.update(Math.min(elapsed, 100) / 1000);
 
     const playing = view !== null && !view.watching && view.match.phase !== 'matchEnd';
+    input.setPlaying(playing);
     input.setTouchVisible(playing, view ? SPECIAL_LABEL[view.match.settings.mode] : '');
-    drawScene(ctx, { width, height, view, players, effects, time });
+    drawScene(ctx, { width, height, view, players, effects, time, hints: !input.touch });
     menus.show(menuView(time, view, players));
   } catch (error) {
     console.error(error);

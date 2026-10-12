@@ -12,8 +12,10 @@ const KEYS: Record<string, Key> = {
   KeyW: 'up',
   ArrowDown: 'down',
   KeyS: 'down',
+  Space: 'up',
   KeyX: 'special',
-  Space: 'special',
+  ShiftLeft: 'special',
+  ShiftRight: 'special',
 };
 
 /** 터치 버튼입니다. 방향 버튼은 왼쪽 아래에 십자 모양으로 놓습니다. */
@@ -24,8 +26,8 @@ const PAD: readonly { key: Key; label: string; name: string }[] = [
   { key: 'right', label: '→', name: '오른쪽' },
 ];
 
-/** Cmd, Ctrl, Alt, Shift 키 자체의 code입니다. */
-const MODIFIER = /^(Meta|OS|Control|Alt|Shift)(Left|Right)$/;
+/** Cmd, Ctrl, Alt 키 자체의 code입니다. Shift는 특수 동작에 쓰므로 여기에 넣지 않습니다. */
+const MODIFIER = /^(Meta|OS|Control|Alt)(Left|Right)$/;
 
 /** 지금 누르고 있는 키와 터치 버튼을 기억합니다. 화면 요소를 쓰지 않습니다. */
 export class InputState {
@@ -96,14 +98,19 @@ function typing(target: EventTarget | null): boolean {
   );
 }
 
-/** 키보드(방향키, WASD, X/스페이스)와 터치 버튼의 입력을 읽습니다. */
+/** 키보드(방향키, WASD, 스페이스, X/Shift)와 터치 버튼의 입력을 읽습니다. */
 export function attachInput(root: HTMLElement): {
   read(): Input;
+  /** 터치 버튼을 쓰는 기기인지 여부. 그런 기기에서는 키보드 조작 안내를 보여 주지 않습니다. */
+  readonly touch: boolean;
+  /** 경기에서 공을 조작하고 있는지 알려 줍니다. 그동안에는 스페이스가 초점이 있는 버튼을 누르지 않습니다. */
+  setPlaying(playing: boolean): void;
   /** 터치 버튼을 보이거나 숨깁니다. special은 특수 동작 버튼에 쓸 글자입니다. 터치 화면이 아니면 항상 숨깁니다. */
   setTouchVisible(show: boolean, special?: string): void;
 } {
   const state = new InputState();
   const coarse = window.matchMedia?.('(pointer: coarse)').matches ?? false;
+  let playing = false;
 
   const layer = document.createElement('div');
   layer.className = 'touch';
@@ -120,12 +127,16 @@ export function attachInput(root: HTMLElement): {
   window.addEventListener('keydown', (event) => {
     if (typing(event.target)) return;
     if (!state.keyDown(event.code, event.metaKey, event.ctrlKey || event.altKey)) return;
-    // Tab으로 초점을 옮긴 버튼은 스페이스로 누를 수 있어야 하므로 그대로 둡니다. 경기 중이 아니면 이 입력은 쓰이지 않습니다.
-    if (event.code === 'Space' && event.target instanceof HTMLButtonElement) return;
-    // 방향키와 스페이스가 화면을 움직이지 않게 합니다.
+    // 메뉴에서는 Tab으로 초점을 옮긴 버튼을 스페이스로 누를 수 있어야 하므로 그대로 둡니다. 경기 중이 아니면 이 입력은 쓰이지 않습니다.
+    if (!playing && event.code === 'Space' && event.target instanceof HTMLButtonElement) return;
+    // 방향키와 스페이스가 화면을 움직이거나 Shift와 방향키가 글자를 고르지 않게 합니다.
     event.preventDefault();
   });
-  window.addEventListener('keyup', (event) => state.keyUp(event.code));
+  window.addEventListener('keyup', (event) => {
+    state.keyUp(event.code);
+    // 버튼은 스페이스를 뗄 때 눌리므로, 경기 중에는 뗄 때에도 막습니다.
+    if (playing && event.code === 'Space' && event.target instanceof HTMLButtonElement) event.preventDefault();
+  });
   window.addEventListener('blur', reset);
   document.addEventListener('visibilitychange', () => {
     if (document.hidden) reset();
@@ -163,6 +174,10 @@ export function attachInput(root: HTMLElement): {
 
   return {
     read: () => state.read(),
+    touch: coarse,
+    setPlaying(value) {
+      playing = value;
+    },
     setTouchVisible(show, label = '') {
       const hidden = !(show && coarse);
       if (special.textContent !== label) special.textContent = label;

@@ -4,14 +4,54 @@ import { InputState } from '../src/input';
 const NONE = { left: false, right: false, up: false, down: false, special: false };
 
 describe('InputState 키보드', () => {
-  it('방향키, WASD, X, 스페이스를 읽는다', () => {
+  it('방향키, WASD, X를 읽는다', () => {
     const state = new InputState();
     expect(state.read()).toEqual(NONE);
-    for (const code of ['KeyA', 'ArrowRight', 'KeyW', 'ArrowDown', 'Space']) expect(state.keyDown(code, false)).toBe(true);
+    for (const code of ['KeyA', 'ArrowRight', 'KeyW', 'ArrowDown', 'KeyX']) expect(state.keyDown(code, false)).toBe(true);
     expect(state.read()).toEqual({ left: true, right: true, up: true, down: true, special: true });
-    state.keyUp('Space');
+    state.keyUp('KeyX');
     expect(state.read().special).toBe(false);
-    state.keyDown('KeyX', false);
+  });
+
+  it.each(['Space', 'ArrowUp', 'KeyW'])('%s는 뛰기다', (code) => {
+    const state = new InputState();
+    expect(state.keyDown(code, false)).toBe(true);
+    expect(state.read()).toEqual({ ...NONE, up: true });
+    state.keyUp(code);
+    expect(state.read()).toEqual(NONE);
+  });
+
+  it.each(['KeyX', 'ShiftLeft', 'ShiftRight'])('%s는 특수 동작이다', (code) => {
+    const state = new InputState();
+    expect(state.keyDown(code, false)).toBe(true);
+    expect(state.read()).toEqual({ ...NONE, special: true });
+    state.keyUp(code);
+    expect(state.read()).toEqual(NONE);
+  });
+
+  it('Shift를 누른 채로 방향키와 스페이스를 눌러도 모두 읽는다', () => {
+    const state = new InputState();
+    state.keyDown('ShiftLeft', false);
+    expect(state.keyDown('ArrowLeft', false)).toBe(true);
+    expect(state.keyDown('Space', false)).toBe(true);
+    expect(state.read()).toEqual({ ...NONE, left: true, up: true, special: true });
+  });
+
+  it('Shift를 눌러도 누르고 있던 키가 떼어지지 않는다', () => {
+    const state = new InputState();
+    state.keyDown('ArrowRight', false);
+    state.keyDown('Space', false);
+    state.keyDown('ShiftRight', false);
+    expect(state.read()).toEqual({ ...NONE, right: true, up: true, special: true });
+    state.keyUp('ShiftRight');
+    expect(state.read()).toEqual({ ...NONE, right: true, up: true });
+  });
+
+  it('양쪽 Shift 가운데 하나만 떼면 계속 누른 것으로 본다', () => {
+    const state = new InputState();
+    state.keyDown('ShiftLeft', false);
+    state.keyDown('ShiftRight', false);
+    state.keyUp('ShiftLeft');
     expect(state.read().special).toBe(true);
   });
 
@@ -39,15 +79,14 @@ describe('InputState 키보드', () => {
     expect(state.read()).toEqual(NONE);
   });
 
-  it('Cmd, Ctrl, Alt, Shift 키만 눌러서는 누르고 있던 키가 떼어지지 않는다', () => {
+  it('Cmd, Ctrl, Alt 키만 눌러서는 누르고 있던 키가 떼어지지 않는다', () => {
     const state = new InputState();
     state.keyDown('ArrowLeft', false);
     state.keyDown('Space', false);
     expect(state.keyDown('MetaLeft', true)).toBe(false);
     expect(state.keyDown('ControlLeft', false, true)).toBe(false);
     expect(state.keyDown('AltRight', false, true)).toBe(false);
-    expect(state.keyDown('ShiftLeft', false)).toBe(false);
-    expect(state.read()).toEqual({ ...NONE, left: true, special: true });
+    expect(state.read()).toEqual({ ...NONE, left: true, up: true });
   });
 
   it('Ctrl이나 Alt와 함께 누른 키는 게임이 쓰지 않고, 누르고 있던 키는 그대로다', () => {
