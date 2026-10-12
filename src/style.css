@@ -378,6 +378,64 @@ body {
   opacity: 0.4;
 }
 
+/* 맵을 작은 그림으로 고르는 격자입니다. 좁은 화면에서는 칸 수가 줄어듭니다. */
+.map-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(78px, 1fr));
+  gap: 6px;
+}
+
+.option.map-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+  min-width: 0;
+  padding: 5px 4px 6px;
+  text-align: center;
+}
+
+.map-picture {
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  border-radius: 6px;
+  background: #1e2433;
+}
+
+.map-shape {
+  fill: #7f8ea8;
+}
+
+.map-shape.bouncy {
+  fill: #63e6be;
+}
+
+.map-shape.mover {
+  stroke: #ffffff;
+  stroke-width: 0.25;
+}
+
+.map-shape.ghost {
+  opacity: 0.35;
+}
+
+.map-random {
+  fill: #9aa6bd;
+  font-size: 12px;
+  font-weight: 800;
+  text-anchor: middle;
+  dominant-baseline: central;
+}
+
+.map-name {
+  font-size: 14px;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .option.step {
   width: 40px;
   padding: 7px 0;

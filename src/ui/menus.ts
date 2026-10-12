@@ -1,8 +1,10 @@
 import { COLORS, MAX_PLAYERS, NAME_LIMIT } from '../game/lobby';
 import { MAPS, RANDOM_MAP } from '../game/maps';
-import { MODES, TARGETS } from '../game/modes';
+import type { GameMap, Shape } from '../game/maps';
+import { MODES, TARGETS, TUNING } from '../game/modes';
 import type { Settings } from '../game/round';
 import type { LobbyView } from '../multiplayer';
+import { corners } from '../physics/geometry';
 
 /** 처음 화면, 대기실, 경기 중 버튼, 최종 결과. 버튼이 눌리면 넘겨받은 함수를 부르기만 하고 게임 상태를 직접 바꾸지 않습니다. */
 
@@ -114,6 +116,59 @@ function options<T>(
     row.append(node);
   }
   return row;
+}
+
+const SVG = 'http://www.w3.org/2000/svg';
+
+function svg(tag: string, attrs: Record<string, string | number>): SVGElement {
+  const node = document.createElementNS(SVG, tag);
+  for (const [name, value] of Object.entries(attrs)) node.setAttribute(name, String(value));
+  return node;
+}
+
+/** 발판 도형 하나를 작은 그림의 조각으로 만듭니다. (dx, dy)만큼 옮겨서 그립니다. */
+function shapeMark(shape: Shape, className: string, dx = 0, dy = 0): SVGElement {
+  if (shape.kind === 'circle') return svg('circle', { class: className, cx: shape.x + dx, cy: shape.y + dy, r: shape.r });
+  const points = (corners(shape) ?? []).map(([x, y]) => `${x + dx},${y + dy}`).join(' ');
+  return svg('polygon', { class: className, points });
+}
+
+/**
+ * 맵 모양을 보여 주는 작은 그림입니다. map이 null이면 무작위를 뜻하는 물음표를 그립니다.
+ * 튕기는 발판은 경기 화면과 같은 색으로, 움직이는 발판은 가는 곳을 흐리게 함께 그립니다.
+ */
+function mapPreview(map: GameMap | null): SVGElement {
+  const picture = svg('svg', { class: 'map-picture', viewBox: `0 0 ${TUNING.viewW} ${TUNING.viewH}`, 'aria-hidden': 'true' });
+  if (!map) {
+    const mark = svg('text', { class: 'map-random', x: TUNING.viewW / 2, y: TUNING.viewH / 2 });
+    mark.textContent = '?';
+    picture.append(mark);
+    return picture;
+  }
+  for (const shape of map.shapes) {
+    const kind = shape.bouncy ? 'map-shape bouncy' : 'map-shape';
+    if (shape.kind === 'box' && shape.move) {
+      picture.append(shapeMark(shape, `${kind} ghost`, shape.move.dx, shape.move.dy));
+      picture.append(shapeMark(shape, `${kind} mover`));
+    } else {
+      picture.append(shapeMark(shape, kind));
+    }
+  }
+  return picture;
+}
+
+/** 맵을 작은 그림으로 보고 고르는 격자입니다. 맨 앞은 무작위입니다. */
+function mapGrid(selected: number, enabled: boolean, onPick: (value: number) => void): HTMLElement {
+  const grid = el('div', 'map-grid');
+  const tiles = [{ value: RANDOM_MAP, name: '무작위', map: null }, ...MAPS.map((map, i) => ({ value: i, name: map.name, map }))];
+  for (const tile of tiles) {
+    const node = button('', () => onPick(tile.value), tile.value === selected ? 'option map-tile on' : 'option map-tile');
+    node.disabled = !enabled;
+    node.setAttribute('aria-pressed', String(tile.value === selected));
+    node.append(mapPreview(tile.map), el('span', 'map-name', tile.name));
+    grid.append(node);
+  }
+  return grid;
 }
 
 export function createMenus(root: HTMLElement, actions: MenuActions): { show(view: MenuView): void } {
@@ -252,12 +307,7 @@ export function createMenus(root: HTMLElement, actions: MenuActions): { show(vie
       ),
       labeled(
         '맵',
-        options(
-          [{ value: RANDOM_MAP, label: '무작위' }, ...MAPS.map((map, i) => ({ value: i, label: map.name }))],
-          settings.mapSetting,
-          canEdit,
-          (value) => actions.settings({ mapSetting: value }),
-        ),
+        mapGrid(settings.mapSetting, canEdit, (value) => actions.settings({ mapSetting: value })),
       ),
     );
 
