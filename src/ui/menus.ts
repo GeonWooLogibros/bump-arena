@@ -1,3 +1,4 @@
+import { DIFFICULTIES } from '../game/bot-skill';
 import { COLORS, MAX_PLAYERS, NAME_LIMIT } from '../game/lobby';
 import { MAPS, RANDOM_MAP } from '../game/maps';
 import type { GameMap, Shape } from '../game/maps';
@@ -321,6 +322,17 @@ export function createMenus(root: HTMLElement, actions: MenuActions): { show(vie
     const stepper = el('div', 'options');
     stepper.append(fewer, el('span', 'count', `${settings.bots}명`), more);
     rules.append(labeled('AI 수', stepper));
+
+    const level = [
+      options(
+        DIFFICULTIES.map((d) => ({ value: d.id, label: d.name })),
+        settings.difficulty,
+        canEdit && settings.bots > 0,
+        (value) => actions.settings({ difficulty: value }),
+      ),
+    ];
+    if (settings.bots === 0) level.push(el('p', 'summary', 'AI가 있을 때만 적용됩니다.'));
+    rules.append(labeled('AI 수준', ...level));
 
     const foot = el('div', 'column foot');
     if (!view.settled) {
