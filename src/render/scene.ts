@@ -1,15 +1,19 @@
-/** 경기 화면 그리기. 받은 상태를 그대로 그리기만 하고 아무것도 바꾸지 않습니다. */
+/** 경기 화면 그리기. 받은 모습을 그대로 그리기만 하고 아무것도 바꾸지 않습니다. */
 import { COLORS } from '../game/lobby';
-import { MAPS } from '../game/maps';
+import { MAPS, moveOffset } from '../game/maps';
 import type { Shape } from '../game/maps';
 import { MODES, TUNING } from '../game/modes';
 import type { PlayerInfo } from '../multiplayer';
 import { corners } from '../physics/geometry';
 import type { ArrowView, BallView } from '../physics/world';
 import type { SessionView } from '../session';
-import { SHARD_LIFE } from './effects';
+import { edgeMark } from './edge';
+import type { EdgeMark } from './edge';
+import { SHARD_LIFE, SPARK_LIFE } from './effects';
 import type { Effects } from './effects';
 import { drawHints, hintOpacity, hintRows } from './hints';
+import { ramp, squashAt, stretchOf } from './pose';
+import type { BallPose, Poses } from './pose';
 
 /** 화면 px = 세계 m × scale + offset 입니다. */
 export interface ViewBox {
@@ -56,8 +60,27 @@ const TAU = Math.PI * 2;
 const ARROW_LENGTH = 0.9;
 /** 라운드 결과 문구를 쓰는 높이(미터)입니다. 점수표 아래, 화면 위쪽입니다. */
 const BANNER_Y = 3.6;
+/** 카운트다운 숫자를 쓰는 높이(미터)와 불투명도입니다. 공을 가리지 않게 화면 위쪽에 조금 비치게 씁니다. */
+const COUNT_Y = 2.9;
+const COUNT_ALPHA = 0.8;
 /** 화면이 흔들리는 폭(미터)입니다. */
 const SHAKE_REACH = 0.14;
+/** 무거워진 공의 안쪽에 덧칠하는 어두운 색입니다. */
+const HEAVY_SHADE = 'rgba(10, 12, 20, 0.4)';
+/** 무거워진 공의 둘레에 그리는 고리가 공에서 떨어진 거리(미터)입니다. */
+const HEAVY_RING = 0.15;
+/** 공이 이 속력(m/s)부터 잔상을 남기고, TRAIL_FULL에서 가장 진합니다. */
+const TRAIL_FROM = 11;
+const TRAIL_FULL = 22;
+/** 잔상의 수, 잔상 사이의 시간 간격(초), 가장 진한 잔상의 불투명도입니다. */
+const TRAIL_COUNT = 4;
+const TRAIL_GAP = 0.014;
+const TRAIL_ALPHA = 0.3;
+/** 화면 밖으로 나간 공을 알리는 화살표의 크기(미터)입니다. 내 공은 크게, 다른 공은 작게 그립니다. */
+const MARK_MINE = 0.5;
+const MARK_OTHER = 0.3;
+/** 충돌 불꽃의 색입니다. 공끼리, 발판, 튕기는 발판 순서입니다. */
+export const SPARK_COLORS = { ball: '#ffffff', ground: '#c5cede', bouncy: BOUNCY_TOP } as const;
 
 /** 창 크기에 16:9로 맞춥니다. 남는 쪽은 가운데에 둡니다. */
 export function fitView(width: number, height: number): ViewBox {
@@ -137,18 +160,41 @@ function drawShape(ctx: CanvasRenderingContext2D, shape: Shape, line: number): v
   ctx.stroke();
 }
 
-function drawShapes(ctx: CanvasRenderingContext2D, shapes: readonly Shape[], px: number): void {
-  for (const shape of shapes) drawShape(ctx, shape, 4 * px);
+/**
+ * 발판들을 그립니다. shapes는 발판이 제자리에 있을 때의 도형이고, 움직이는 발판은 time초의 위치로 옮겨 그립니다.
+ * 공이 방금 튕긴 발판은 눌린 만큼 밀어서 그립니다.
+ */
+function drawShapes(ctx: CanvasRenderingContext2D, shapes: readonly Shape[], px: number, time = 0, poses?: Poses): void {
+  shapes.forEach((shape, i) => {
+    let dx = 0;
+    let dy = 0;
+    if (shape.kind === 'box' && shape.move) [dx, dy] = moveOffset(shape.move, time);
+    const dent = poses?.pad(i);
+    if (dent) {
+      const depth = squashAt(dent.amount, dent.age);
+      dx += dent.nx * depth;
+      dy += dent.ny * depth;
+    }
+    if (dx === 0 && dy === 0) {
+      drawShape(ctx, shape, 4 * px);
+      return;
+    }
+    ctx.save();
+    ctx.translate(dx, dy);
+    drawShape(ctx, shape, 4 * px);
+    ctx.restore();
+  });
 }
 
-function drawRope(ctx: CanvasRenderingContext2D, ball: BallView, px: number): void {
-  if (!ball.rope) return;
-  const [ax, ay] = ball.rope;
+function drawRope(ctx: CanvasRenderingContext2D, pose: BallPose, px: number): void {
+  if (!pose.ball.rope) return;
+  const ax = pose.ropeX;
+  const ay = pose.ropeY;
   ctx.strokeStyle = ROPE;
   ctx.lineWidth = 2.5 * px;
   ctx.lineCap = 'round';
   ctx.beginPath();
-  ctx.moveTo(ball.x, ball.y);
+  ctx.moveTo(pose.x, pose.y);
   ctx.lineTo(ax, ay);
   ctx.stroke();
   ctx.fillStyle = ROPE;
@@ -157,37 +203,79 @@ function drawRope(ctx: CanvasRenderingContext2D, ball: BallView, px: number): vo
   ctx.fill();
 }
 
-function drawBall(ctx: CanvasRenderingContext2D, ball: BallView, colors: BallColors, px: number): void {
-  const r = TUNING.radius;
-  const edge = (ball.heavy ? 5 : 2) * px;
+/** 지금의 좌표계를 단위 벡터 (ux, uy) 방향으로 k배, 그 옆 방향으로 1/k배 합니다. 넓이는 그대로입니다. */
+function deform(ctx: CanvasRenderingContext2D, ux: number, uy: number, k: number): void {
+  const inv = 1 / k;
+  const skew = (k - inv) * ux * uy;
+  ctx.transform(k * ux * ux + inv * uy * uy, skew, skew, k * uy * uy + inv * ux * ux, 0, 0);
+}
+
+/** 빠르게 날아가는 공의 뒤에 흐린 원을 몇 개 남깁니다. */
+function drawTrail(ctx: CanvasRenderingContext2D, pose: BallPose, colors: BallColors): void {
+  const strength = ramp(Math.hypot(pose.vx, pose.vy), TRAIL_FROM, TRAIL_FULL);
+  if (strength <= 0) return;
   ctx.fillStyle = colors.fill;
-  ctx.strokeStyle = colors.edge;
+  for (let k = TRAIL_COUNT; k >= 1; k--) {
+    ctx.globalAlpha = strength * TRAIL_ALPHA * (1 - (k - 1) / TRAIL_COUNT);
+    ctx.beginPath();
+    ctx.arc(pose.x - pose.vx * TRAIL_GAP * k, pose.y - pose.vy * TRAIL_GAP * k, TUNING.radius * (1 - 0.12 * k), 0, TAU);
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+}
+
+function drawBall(ctx: CanvasRenderingContext2D, pose: BallPose, colors: BallColors, px: number): void {
+  const r = TUNING.radius;
+  const { heavy } = pose.ball;
+  const edge = (heavy ? 5 : 2) * px;
+  ctx.save();
+  // 눌린 만큼 부딪친 쪽으로 다가가서, 닿은 면이 떨어져 보이지 않게 합니다.
+  ctx.translate(pose.x + pose.nx * r * pose.squash, pose.y + pose.ny * r * pose.squash);
+  const speed = Math.hypot(pose.vx, pose.vy);
+  const stretch = stretchOf(speed);
+  if (stretch > 0) deform(ctx, pose.vx / speed, pose.vy / speed, 1 + stretch);
+  if (pose.squash !== 0) deform(ctx, pose.nx, pose.ny, 1 - pose.squash);
   ctx.lineCap = 'round';
+  // 무거워진 공은 안쪽이 어둡고 테두리가 굵으며, 둘레에 고리가 하나 더 있습니다.
+  ctx.fillStyle = colors.fill;
+  ctx.strokeStyle = heavy ? colors.fill : colors.edge;
   // 테두리가 굵어져도 공의 크기는 그대로 보이게 안쪽으로 긋습니다.
   ctx.lineWidth = edge;
   ctx.beginPath();
-  ctx.arc(ball.x, ball.y, r - edge / 2, 0, TAU);
+  ctx.arc(0, 0, r - edge / 2, 0, TAU);
   ctx.fill();
+  if (heavy) {
+    ctx.fillStyle = HEAVY_SHADE;
+    ctx.fill();
+  }
   ctx.stroke();
   ctx.lineWidth = 2 * px;
-  if (ball.heavy) {
+  const core = heavy ? r * 0.3 : 0;
+  if (heavy) {
+    ctx.fillStyle = colors.fill;
     ctx.beginPath();
-    ctx.arc(ball.x, ball.y, r * 0.45, 0, TAU);
+    ctx.arc(0, 0, core, 0, TAU);
+    ctx.fill();
+    ctx.globalAlpha *= 0.65;
+    ctx.lineWidth = 3 * px;
+    ctx.beginPath();
+    ctx.arc(0, 0, r + HEAVY_RING, 0, TAU);
     ctx.stroke();
+    ctx.lineWidth = 2 * px;
   }
   // 굴러가는 방향을 알 수 있는 반지름 선입니다.
-  const cos = Math.cos(ball.angle);
-  const sin = Math.sin(ball.angle);
-  const from = ball.heavy ? r * 0.45 : 0;
+  const cos = Math.cos(pose.angle);
+  const sin = Math.sin(pose.angle);
   ctx.beginPath();
-  ctx.moveTo(ball.x + cos * from, ball.y + sin * from);
-  ctx.lineTo(ball.x + cos * (r - edge), ball.y + sin * (r - edge));
+  ctx.moveTo(cos * core, sin * core);
+  ctx.lineTo(cos * (r - edge), sin * (r - edge));
   ctx.stroke();
+  ctx.restore();
 }
 
 /** 화살을 모으는 동안 겨누는 방향의 선과 모인 힘만큼 채워지는 호를 그립니다. */
-function drawAim(ctx: CanvasRenderingContext2D, ball: BallView, px: number): void {
-  const aim = ball.aim;
+function drawAim(ctx: CanvasRenderingContext2D, ball: BallPose, px: number): void {
+  const aim = ball.ball.aim;
   if (!aim) return;
   const r = TUNING.radius;
   const charge = Math.max(0, Math.min(1, aim.charge));
@@ -213,7 +301,7 @@ function drawAim(ctx: CanvasRenderingContext2D, ball: BallView, px: number): voi
 }
 
 /** 화살 하나를 그립니다. (x, y)가 촉의 위치이고 몸통은 날아온 쪽으로 뻗습니다. */
-function drawArrow(ctx: CanvasRenderingContext2D, arrow: ArrowView, color: string, px: number): void {
+function drawArrow(ctx: CanvasRenderingContext2D, arrow: ArrowView, x: number, y: number, color: string, px: number): void {
   const cos = Math.cos(arrow.angle);
   const sin = Math.sin(arrow.angle);
   const head = 0.24;
@@ -221,15 +309,15 @@ function drawArrow(ctx: CanvasRenderingContext2D, arrow: ArrowView, color: strin
   ctx.strokeStyle = ARROW;
   ctx.lineWidth = 3 * px;
   ctx.beginPath();
-  ctx.moveTo(arrow.x - cos * ARROW_LENGTH, arrow.y - sin * ARROW_LENGTH);
-  ctx.lineTo(arrow.x - cos * head * 0.5, arrow.y - sin * head * 0.5);
+  ctx.moveTo(x - cos * ARROW_LENGTH, y - sin * ARROW_LENGTH);
+  ctx.lineTo(x - cos * head * 0.5, y - sin * head * 0.5);
   ctx.stroke();
   // 촉은 쏜 사람의 색으로 칠합니다.
   ctx.fillStyle = color;
   ctx.beginPath();
-  ctx.moveTo(arrow.x, arrow.y);
-  ctx.lineTo(arrow.x - cos * head + sin * head * 0.5, arrow.y - sin * head - cos * head * 0.5);
-  ctx.lineTo(arrow.x - cos * head - sin * head * 0.5, arrow.y - sin * head + cos * head * 0.5);
+  ctx.moveTo(x, y);
+  ctx.lineTo(x - cos * head + sin * head * 0.5, y - sin * head - cos * head * 0.5);
+  ctx.lineTo(x - cos * head - sin * head * 0.5, y - sin * head + cos * head * 0.5);
   ctx.closePath();
   ctx.fill();
 }
@@ -252,8 +340,60 @@ function drawEffects(ctx: CanvasRenderingContext2D, effects: Effects, px: number
     ctx.arc(shard.x, shard.y, 0.07 + 0.11 * left, 0, TAU);
     ctx.fill();
   }
+  // 불꽃은 날아가는 방향으로 짧게 긋습니다.
+  ctx.lineCap = 'round';
+  ctx.lineWidth = 2.5 * px;
+  for (const spark of effects.sparks) {
+    ctx.globalAlpha = Math.max(0, spark.life / SPARK_LIFE);
+    ctx.strokeStyle = spark.color;
+    ctx.beginPath();
+    ctx.moveTo(spark.x, spark.y);
+    ctx.lineTo(spark.x - spark.vx * 0.025, spark.y - spark.vy * 0.025);
+    ctx.stroke();
+  }
   ctx.globalAlpha = 1;
 }
+
+const MARK: EdgeMark = { x: 0, y: 0, angle: 0, danger: 0 };
+
+/**
+ * 화면 밖으로 나간 공마다 가장자리에 그 공이 있는 쪽을 가리키는 화살표를 그립니다.
+ * 내 공의 화살표는 크고, 탈락 경계에 가까울수록 더 커지며 빠르게 깜빡입니다.
+ */
+function drawEdgeMarks(
+  ctx: CanvasRenderingContext2D,
+  poses: Poses,
+  me: string,
+  players: readonly PlayerInfo[],
+  time: number,
+  px: number,
+): void {
+  for (const pose of poses.balls) {
+    if (!pose.ball.alive || !edgeMark(pose.x, pose.y, MARK)) continue;
+    const mine = pose.ball.id === me;
+    const colors = ballColors(players, pose.ball.id);
+    const size = mine ? MARK_MINE * (1 + 0.3 * MARK.danger) : MARK_OTHER;
+    ctx.save();
+    ctx.translate(MARK.x, MARK.y);
+    ctx.rotate(MARK.angle);
+    ctx.globalAlpha = mine ? 0.7 + 0.3 * Math.sin(time * (0.01 + 0.02 * MARK.danger)) : 0.85;
+    ctx.fillStyle = colors.fill;
+    ctx.strokeStyle = mine ? TEXT : colors.edge;
+    ctx.lineWidth = (mine ? 3 : 2) * px;
+    ctx.lineJoin = 'round';
+    ctx.beginPath();
+    ctx.moveTo(size, 0);
+    ctx.lineTo(-size * 0.6, -size * 0.7);
+    ctx.lineTo(-size * 0.6, size * 0.7);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+    ctx.restore();
+  }
+}
+
+const BACKDROP_BALL: BallView = { id: '', x: 0, y: 0, angle: 0, alive: true, heavy: false, rope: null, aim: null };
+const BACKDROP: BallPose = { ball: BACKDROP_BALL, x: 0, y: 0, angle: 0, ropeX: 0, ropeY: 0, vx: 0, vy: 0, nx: 0, ny: 0, squash: 0 };
 
 /** 경기가 없을 때 메뉴 뒤에 보이는 그림입니다. 평지 위에서 공 여섯 개가 통통 뜁니다. */
 function drawBackdrop(ctx: CanvasRenderingContext2D, time: number, px: number): void {
@@ -262,17 +402,10 @@ function drawBackdrop(ctx: CanvasRenderingContext2D, time: number, px: number): 
   drawShapes(ctx, map.shapes, px);
   map.spawns.forEach(([x], i) => {
     const hop = Math.abs(Math.sin(time / 420 + i * 1.3));
-    const ball: BallView = {
-      id: '',
-      x,
-      y: 12.5 - TUNING.radius - hop * (1.2 + (i % 3) * 0.5),
-      angle: time / 600 + i,
-      alive: true,
-      heavy: false,
-      rope: null,
-      aim: null,
-    };
-    drawBall(ctx, ball, COLORS[i % COLORS.length], px);
+    BACKDROP.x = x;
+    BACKDROP.y = 12.5 - TUNING.radius - hop * (1.2 + (i % 3) * 0.5);
+    BACKDROP.angle = time / 600 + i;
+    drawBall(ctx, BACKDROP, COLORS[i % COLORS.length], px);
   });
   ctx.globalAlpha = 1;
 }
@@ -380,7 +513,9 @@ function drawMessages(ctx: CanvasRenderingContext2D, view: SessionView, rows: re
     const count = Math.min(3, Math.ceil(left / 1000));
     // 숫자가 바뀔 때 크게 나타났다가 줄어듭니다.
     const fresh = (left % 1000) / 1000;
-    drawBanner(ctx, String(count), TEXT, box, TUNING.viewH / 2, scale * (1.5 + 0.7 * fresh));
+    ctx.globalAlpha = COUNT_ALPHA;
+    drawBanner(ctx, String(count), TEXT, box, COUNT_Y, scale * (1.3 + 0.5 * fresh));
+    ctx.globalAlpha = 1;
   } else if (phase === 'roundEnd') {
     const row = rows.find((r) => r.id === winner);
     // 남은 공을 끝까지 볼 수 있게 화면 위쪽에 씁니다.
@@ -404,6 +539,8 @@ export function drawScene(
     view: SessionView | null;
     players: PlayerInfo[];
     effects: Effects;
+    /** 이번 프레임에 그릴 공과 화살의 모습입니다. */
+    poses: Poses;
     time: number;
     /** 키보드 조작 안내를 그릴지 여부. 터치 버튼을 보여 주는 기기에서는 false입니다. */
     hints?: boolean;
@@ -435,21 +572,26 @@ export function drawScene(
     ctx.restore();
     return;
   }
-  const alive = view.balls.filter((ball) => ball.alive);
-  drawShapes(ctx, view.shapes, px);
-  for (const ball of alive) drawRope(ctx, ball, px);
-  for (const arrow of view.arrows) drawArrow(ctx, arrow, ballColors(s.players, arrow.owner).fill, px);
-  for (const ball of alive) drawBall(ctx, ball, ballColors(s.players, ball.id), px);
-  for (const ball of alive) drawAim(ctx, ball, px);
+  const { poses } = s;
+  drawShapes(ctx, map.shapes, px, poses.time, poses);
+  for (const pose of poses.balls) if (pose.ball.alive) drawRope(ctx, pose, px);
+  for (const pose of poses.arrows) {
+    drawArrow(ctx, pose.arrow, pose.x, pose.y, ballColors(s.players, pose.arrow.owner).fill, px);
+  }
+  for (const pose of poses.balls) if (pose.ball.alive) drawTrail(ctx, pose, ballColors(s.players, pose.ball.id));
+  for (const pose of poses.balls) if (pose.ball.alive) drawBall(ctx, pose, ballColors(s.players, pose.ball.id), px);
+  for (const pose of poses.balls) if (pose.ball.alive) drawAim(ctx, pose, px);
   drawEffects(ctx, s.effects, px);
+  drawEdgeMarks(ctx, poses, view.me, s.players, s.time, px);
   ctx.restore();
 
   const rows = scoreRows(view, s.players);
-  for (const ball of alive) {
-    const row = rows.find((r) => r.id === ball.id);
-    const x = offsetX + (ball.x + shakeX) * scale;
-    const top = offsetY + (ball.y + shakeY - TUNING.radius) * scale;
-    drawName(ctx, x, top, row?.name ?? GONE_NAME, ball.id === view.me, u);
+  for (const pose of poses.balls) {
+    if (!pose.ball.alive) continue;
+    const row = rows.find((r) => r.id === pose.ball.id);
+    const x = offsetX + (pose.x + shakeX) * scale;
+    const top = offsetY + (pose.y + shakeY - TUNING.radius) * scale;
+    drawName(ctx, x, top, row?.name ?? GONE_NAME, pose.ball.id === view.me, u);
   }
 
   const worldWidth = TUNING.viewW * scale;

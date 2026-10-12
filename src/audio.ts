@@ -18,8 +18,8 @@ export interface Sound {
   unlock(): void;
   /** 소리를 켜거나 끄고, 바뀐 뒤에 꺼져 있는지를 돌려줍니다. */
   toggle(): boolean;
-  /** 효과음을 냅니다. volume은 0~1입니다. */
-  play(name: SoundName, volume?: number): void;
+  /** 효과음을 냅니다. volume은 0~1이고, rate는 빠르기입니다. 1보다 크면 높은 소리가 납니다. */
+  play(name: SoundName, volume?: number, rate?: number): void;
 }
 
 const FILES: Record<SoundName, string> = { hit, out, shoot, stick, rope, jump, tick, go, win, click };
@@ -74,7 +74,7 @@ export function createAudio(): Sound {
       sound.muted = !sound.muted;
       return sound.muted;
     },
-    play(name, volume = 1) {
+    play(name, volume = 1, rate = 1) {
       const buffer = buffers.get(name);
       if (sound.muted || !context || !buffer) return;
       if (name === 'hit') {
@@ -85,6 +85,7 @@ export function createAudio(): Sound {
         const source = context.createBufferSource();
         const gain = context.createGain();
         source.buffer = buffer;
+        source.playbackRate.value = rate;
         gain.gain.value = Math.max(0, Math.min(1, volume));
         source.connect(gain).connect(context.destination);
         source.start();

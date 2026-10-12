@@ -11,7 +11,8 @@ import { connect } from './net/connect';
 import type { Connection } from './net/connect';
 import type { WorldEvent } from './physics/world';
 import { Effects } from './render/effects';
-import { GONE_NAME, ballColors, drawScene, scoreRows } from './render/scene';
+import { Poses } from './render/pose';
+import { GONE_NAME, SPARK_COLORS, ballColors, drawScene, scoreRows } from './render/scene';
 import type { SessionView } from './session';
 import { browserStorage, loadProfile, saveProfile } from './storage';
 import { createMenus } from './ui/menus';
@@ -20,6 +21,8 @@ import type { MenuView } from './ui/menus';
 /** 초대 링크를 복사한 결과를 보여 주는 시간(밀리초). */
 const COPIED_MS = 2000;
 /** 터치 화면의 특수 동작 버튼에 쓰는 글자입니다. */
+/** 튕기는 발판에서 튕길 때는 뛰는 소리를 이 빠르기로 높여서 냅니다. */
+const BOUNCE_RATE = 1.7;
 const SPECIAL_LABEL: Record<Mode, string> = { classic: '무거워지기', grapple: '줄', arrows: '화살' };
 
 const app = document.querySelector<HTMLDivElement>('#app');
@@ -33,6 +36,15 @@ const ctx = context;
 const store = browserStorage();
 const audio = createAudio();
 const effects = new Effects();
+const poses = new Poses();
+// 움직임 줄이기를 켠 사람에게는 화면 흔들림과 멈춤을 쓰지 않습니다.
+const calm = window.matchMedia?.('(prefers-reduced-motion: reduce)');
+function setCalm(): void {
+  effects.reduced = calm?.matches ?? false;
+  poses.reduced = effects.reduced;
+}
+setCalm();
+calm?.addEventListener?.('change', setCalm);
 const input = attachInput(app);
 /** 초대 링크로 열었으면 주소 뒤의 방 코드를 입력 칸에 미리 넣어 둡니다. */
 const invitedCode = parseRoomCode(window.location.hash) ?? '';
@@ -47,7 +59,9 @@ let lastPhase: Phase = 'lobby';
 let lastCount = 0;
 
 function onStage(stage: Stage): void {
-  if (stage !== 'game') effects.clear();
+  if (stage === 'game') return;
+  effects.clear();
+  poses.clear();
 }
 
 /** 연결되기 전에도 연습하기를 할 수 있게, 통신 없이 먼저 만들어 둡니다. */
@@ -149,8 +163,18 @@ const menus = createMenus(app, {
 function react(events: readonly WorldEvent[], view: SessionView | null, players: readonly PlayerInfo[]): void {
   for (const event of events) {
     if (event.type === 'hit') {
-      audio.play('hit', 0.2 + 0.8 * event.strength);
-      effects.hit(event.strength);
+      const { strength, x, y, nx, ny, a, b } = event;
+      // 센 충돌일수록 낮은 소리가 납니다.
+      if (event.bouncy) audio.play('jump', 0.3 + 0.5 * strength, BOUNCE_RATE);
+      else audio.play('hit', 0.2 + 0.8 * strength, 1.12 - 0.24 * strength);
+      effects.hit(strength);
+      effects.spark(x, y, nx, ny, strength, SPARK_COLORS[event.bouncy ? 'bouncy' : a && b ? 'ball' : 'ground']);
+      if (a) poses.squash(a, nx, ny, strength);
+      if (b) poses.squash(b, -nx, -ny, strength);
+      // 발판은 공이 누른 쪽으로 눌립니다.
+      if (event.bouncy && view) poses.press(view.shapes, x, y, a ? nx : -nx, a ? ny : -ny, strength);
+      // 조작이 밀려 보이지 않게, 내 공이 부딪쳤을 때만 멈춥니다. 구경 중에는 어느 공이든 멈춥니다.
+      if (a && b && view && (view.watching || a === view.me || b === view.me)) poses.freeze(strength);
     } else if (event.type === 'out') {
       audio.play('out', 0.9);
       effects.out(event.x, event.y, ballColors(players, event.id).fill);
@@ -241,12 +265,14 @@ function frame(time: number): void {
     const view = mp.stage === 'game' ? (mp.session?.view() ?? null) : null;
     const players = mp.players();
     react(events, view, players);
-    effects.update(Math.min(elapsed, 100) / 1000);
+    const seconds = Math.min(elapsed, 100) / 1000;
+    effects.update(seconds);
+    poses.update(view, seconds);
 
     const playing = view !== null && !view.watching && view.match.phase !== 'matchEnd';
     input.setPlaying(playing);
     input.setTouchVisible(playing, view ? SPECIAL_LABEL[view.match.settings.mode] : '');
-    drawScene(ctx, { width, height, view, players, effects, time, hints: !input.touch });
+    drawScene(ctx, { width, height, view, players, effects, poses, time, hints: !input.touch });
     menus.show(menuView(time, view, players));
   } catch (error) {
     console.error(error);

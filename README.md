@@ -81,7 +81,7 @@ Node.js 22 이상이 필요합니다.
 | `src/physics/` | 공과 발판의 물리 세계(`world.ts`), 화살(`arrows.ts`), 도형 계산(`geometry.ts`)입니다. |
 | `src/game/` | 대기실 규칙(`lobby.ts`), 맵(`maps.ts`), 모드와 수치(`modes.ts`), 경기 진행 단계(`round.ts`), AI(`bot.ts`)입니다. |
 | `src/net/` | 연결 방식 고르기(`connect.ts`), 혼자 쓰는 방(`local-room.ts`), P2P 방(`p2p-room.ts`), 주고받는 값의 형식(`wire.ts`)입니다. |
-| `src/render/` | 경기 화면 그리기(`scene.ts`)와 탈락 조각, 화면 흔들림(`effects.ts`)입니다. |
+| `src/render/` | 경기 화면 그리기(`scene.ts`), 물리 계산 사이를 이어 그리는 계산과 찌그러짐·짧은 멈춤(`pose.ts`), 탈락 조각·충돌 불꽃·화면 흔들림(`effects.ts`), 화면 밖 공의 표시(`edge.ts`), 조작 안내(`hints.ts`)입니다. |
 | `src/ui/menus.ts` | 처음 화면, 대기실, 경기 중 버튼, 최종 결과 화면입니다. |
 | `src/input.ts` | 키보드와 터치 버튼 입력을 읽습니다. |
 | `src/audio.ts`, `src/sounds/` | 효과음 재생과 효과음 파일입니다. |
