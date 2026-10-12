@@ -1,6 +1,7 @@
+import { mapAt, moveOffset } from '../game/maps';
 import type { GameMap } from '../game/maps';
 import { TUNING } from '../game/modes';
-import { nearestOnSegment, segmentHit } from './geometry';
+import { nearestOnSegment, segmentHitAt } from './geometry';
 import type { Point } from './geometry';
 
 /** 화살의 발사 정보입니다. age는 쏜 뒤 지난 시간(초)입니다. */
@@ -46,6 +47,10 @@ interface Arrow {
   age: number;
   stuck: boolean;
   stuckAge: number;
+  /** 꽂힌 발판의 도형 번호입니다. 꽂히지 않았으면 -1입니다. */
+  on: number;
+  /** 꽂힌 순간 그 발판이 제자리에서 벗어나 있던 거리입니다. */
+  onAt: Point;
   angle: number;
 }
 
@@ -65,11 +70,16 @@ const STUCK_GAP = 0.05;
 /** 부동소수점 누적 오차 때문에 시간 비교가 한 step 어긋나는 일을 막습니다. */
 const EPS = 1e-9;
 
-/** 날아가는 화살들입니다. 화살은 물리 물체가 아니라 발사 정보에서 직접 적분합니다. */
+/**
+ * 날아가는 화살들입니다. 화살은 물리 물체가 아니라 발사 정보에서 직접 적분합니다.
+ * time은 play 단계가 시작된 뒤 지난 시간(초)이고, 움직이는 발판은 그 시간의 위치로 판정합니다.
+ * 움직이는 발판에 꽂힌 화살은 사라질 때까지 그 발판을 따라 움직입니다.
+ */
 export class Arrows {
   private readonly list: Arrow[] = [];
   private readonly nextId = new Map<string, number>();
   private readonly lost = new Set<string>();
+  private time = 0;
 
   constructor(private readonly map: GameMap) {}
 
@@ -77,15 +87,17 @@ export class Arrows {
    * owner의 화살을 (x, y)에서 쏩니다. 번호는 주인별로 1부터 늘어납니다.
    * 공 중심 origin에서 (x, y)까지 사이에 발판이 있으면 그 표면에 이미 꽂힌 채로 시작하고 true를 돌려줍니다.
    */
-  launch(owner: string, origin: Point, x: number, y: number, vx: number, vy: number): boolean {
+  launch(owner: string, origin: Point, x: number, y: number, vx: number, vy: number, time: number): boolean {
+    this.time = time;
     const id = (this.nextId.get(owner) ?? 0) + 1;
     this.nextId.set(owner, id);
-    const wall = segmentHit(this.map, origin, [x, y]);
-    if (!wall) {
+    const hit = segmentHitAt(mapAt(this.map, time), origin, [x, y]);
+    if (!hit) {
       this.list.push(this.create(owner, { id, x, y, vx, vy, age: 0 }));
       return false;
     }
     // 받는 쪽이 같은 발판에 꽂히도록 발사 정보는 표면 바로 앞에 둡니다.
+    const wall = hit.point;
     const speed = Math.hypot(vx, vy);
     const arrow = this.create(owner, {
       id,
@@ -97,16 +109,17 @@ export class Arrows {
     });
     arrow.x = wall[0];
     arrow.y = wall[1];
-    arrow.stuck = true;
+    this.stick(arrow, hit.shape, time);
     this.list.push(arrow);
     return true;
   }
 
-  /** 화살 하나씩 한 step 진행합니다. 꽂히거나 맞히거나 수명이 다한 화살은 처리하고 결과를 돌려줍니다. */
-  step(targets: readonly Target[]): ArrowStepResult {
+  /** 화살 하나씩 time까지 한 step 진행합니다. 꽂히거나 맞히거나 수명이 다한 화살은 처리하고 결과를 돌려줍니다. */
+  step(targets: readonly Target[], time: number): ArrowStepResult {
+    this.time = time;
     const result: ArrowStepResult = { stuck: 0, hits: [] };
     for (let i = this.list.length - 1; i >= 0; i--) {
-      const outcome = this.advance(this.list[i], targets);
+      const outcome = this.advance(this.list[i], targets, time);
       if (outcome === 'stick') result.stuck++;
       if (outcome === 'gone') this.list.splice(i, 1);
       else if (outcome !== 'fly' && outcome !== 'stick') {
@@ -125,9 +138,10 @@ export class Arrows {
 
   /**
    * owner의 화살을 받은 목록에 맞춥니다. 모르는 번호는 만들고(age만큼 미리 진행), 목록에 없는 것은 없앱니다.
-   * 미리 진행하다 맞힌 공의 번호를 돌려줍니다.
+   * 미리 진행하는 동안 움직이는 발판은 그때 있던 위치로 판정합니다. 미리 진행하다 맞힌 공의 번호를 돌려줍니다.
    */
-  sync(owner: string, shots: readonly ArrowShot[], targets: readonly Target[]): string[] {
+  sync(owner: string, shots: readonly ArrowShot[], targets: readonly Target[], time: number): string[] {
+    this.time = time;
     const keep = new Set(shots.map((s) => s.id));
     // 이 주인의 공을 나중에 여기서 맡아 쏘더라도 받은 번호와 겹치지 않게 합니다.
     this.nextId.set(owner, Math.max(this.nextId.get(owner) ?? 0, ...keep));
@@ -146,7 +160,7 @@ export class Arrows {
       const steps = Math.min(Math.round(shot.age / TUNING.step), Math.round(TUNING.arrowLife / TUNING.step));
       let outcome: ReturnType<Arrows['advance']> = 'fly';
       for (let i = 0; i < steps && (outcome === 'fly' || outcome === 'stick'); i++) {
-        outcome = this.advance(arrow, targets);
+        outcome = this.advance(arrow, targets, time - (steps - 1 - i) * TUNING.step);
       }
       if (outcome === 'fly' || outcome === 'stick') {
         this.list.push(arrow);
@@ -160,13 +174,26 @@ export class Arrows {
 
   /** 지금 남아 있는 화살들의 모습입니다. */
   views(): ArrowView[] {
-    return this.list.map((a) => ({
-      owner: a.owner,
-      x: a.x,
-      y: a.y,
-      angle: a.angle,
-      stuck: a.stuck,
-    }));
+    return this.list.map((a) => {
+      const [dx, dy] = this.carried(a);
+      return { owner: a.owner, x: a.x + dx, y: a.y + dy, angle: a.angle, stuck: a.stuck };
+    });
+  }
+
+  /** 화살을 shape번 발판에 꽂힌 것으로 합니다. */
+  private stick(a: Arrow, shape: number, time: number): void {
+    const on = this.map.shapes[shape];
+    a.stuck = true;
+    a.on = shape;
+    a.onAt = on.kind === 'box' && on.move ? moveOffset(on.move, time) : [0, 0];
+  }
+
+  /** 꽂힌 뒤로 발판이 움직인 거리입니다. 움직이지 않는 발판이나 날아가는 화살은 0입니다. */
+  private carried(a: Arrow): Point {
+    const on = this.map.shapes[a.on];
+    if (!on || on.kind !== 'box' || !on.move) return [0, 0];
+    const [dx, dy] = moveOffset(on.move, this.time);
+    return [dx - a.onAt[0], dy - a.onAt[1]];
   }
 
   private create(owner: string, shot: ArrowShot): Arrow {
@@ -181,12 +208,14 @@ export class Arrows {
       age: 0,
       stuck: false,
       stuckAge: 0,
+      on: -1,
+      onAt: [0, 0],
       angle: Math.atan2(vy, vx),
     };
   }
 
-  /** 화살 하나를 한 step 진행합니다. */
-  private advance(a: Arrow, targets: readonly Target[]): 'fly' | 'stick' | 'gone' | { hit: string } {
+  /** 화살 하나를 time까지 한 step 진행합니다. */
+  private advance(a: Arrow, targets: readonly Target[], time: number): 'fly' | 'stick' | 'gone' | { hit: string } {
     a.age += TUNING.step;
     if (a.age >= TUNING.arrowLife - EPS) return 'gone';
     if (a.stuck) {
@@ -196,8 +225,8 @@ export class Arrows {
     a.vy += TUNING.gravity * TUNING.step;
     const from: Point = [a.x, a.y];
     const to: Point = [a.x + a.vx * TUNING.step, a.y + a.vy * TUNING.step];
-    const wall = segmentHit(this.map, from, to);
-    const end = wall ?? to;
+    const wall = segmentHitAt(mapAt(this.map, time), from, to);
+    const end = wall?.point ?? to;
     for (const t of targets) {
       if (t.id === a.owner) continue;
       const near = nearestOnSegment(from, end, t.x, t.y);
@@ -206,7 +235,7 @@ export class Arrows {
     a.x = end[0];
     a.y = end[1];
     if (wall) {
-      a.stuck = true;
+      this.stick(a, wall.shape, time);
       return 'stick';
     }
     a.angle = Math.atan2(a.vy, a.vx);

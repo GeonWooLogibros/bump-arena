@@ -1,5 +1,6 @@
 import { Box, Circle, Polygon, RopeJoint, Vec2, World as PlanckWorld } from 'planck';
 import type { Body, Fixture } from 'planck';
+import { mapAt, moveOffset } from '../game/maps';
 import type { GameMap, Shape } from '../game/maps';
 import { TUNING } from '../game/modes';
 import type { Mode } from '../game/modes';
@@ -80,10 +81,17 @@ export type WorldEvent =
 /** 겨누는 모습입니다. dx, dy는 방향이고 charge는 0~1입니다. */
 type Aim = { dx: number; dy: number; charge: number };
 
-/** 공에 걸린 줄입니다. */
+/** 공에 걸린 줄입니다. 움직이는 발판에 걸렸으면 mover가 그 발판이고 anchor는 발판 안에서의 위치입니다. */
 interface Rope {
   joint: RopeJoint;
   anchor: Point;
+  mover: Body | null;
+}
+
+/** 움직이는 발판 하나입니다. shape는 제자리에 있을 때의 모양입니다. */
+interface Mover {
+  shape: Extract<Shape, { kind: 'box' }>;
+  body: Body;
 }
 
 /** 공 하나의 물리 상태와 조작을 담습니다. */
@@ -102,6 +110,9 @@ interface Entry {
   cooldown: number;
   facing: 1 | -1;
   aimDir: Point;
+  /** 지금 딛고 있는 움직이는 발판과, 지난 step에 그 발판이 움직이던 가로 속도입니다. */
+  ride: Body | null;
+  rideVx: number;
   x: number;
   y: number;
   angle: number;
@@ -123,9 +134,29 @@ const BOUNDS = {
   bottom: TUNING.viewH + TUNING.boundsMargin,
 };
 
+/** 움직이는 발판이 가야 할 곳과 이보다 멀리 떨어져 있으면 속도를 주지 않고 바로 옮깁니다(m). 경기 도중에 들어왔을 때 쓰입니다. */
+const MOVER_SNAP = 0.5;
+
+/** 움직이는 발판에 건 줄의 고정점이 받은 위치와 이만큼 어긋나도 같은 줄로 봅니다(m). 발판이 통신 지연 동안 움직이는 거리보다 넉넉합니다. */
+const MOVER_SLACK = 0.4;
+
+/** 닿은 면이 이보다 위를 향하면 그 발판을 딛고 있는 것으로 봅니다. */
+const RIDE_NORMAL = 0.7;
+
+/** 움직이는 발판 위에서 좌우를 누르지 않을 때, 발판과의 속도 차가 1초에 이 비율로 줄어듭니다. */
+const RIDE_GRIP = 3;
+
+/** AI가 읽는 지형은 이 간격(초)으로만 새 위치로 바꿉니다. */
+const FOOTING_STEP = 0.1;
+
+/** 발판 fixture의 성질입니다. 튕기는 발판은 반발 계수가 높습니다. */
+function surface(shape: Shape): { friction: number; restitution: number } {
+  return { friction: TUNING.friction, restitution: shape.bouncy ? TUNING.bouncyRestitution : 0 };
+}
+
 /** 발판 도형을 정적 물체의 fixture로 붙입니다. */
 function addShape(ground: Body, shape: Shape): void {
-  const opt = { friction: TUNING.friction };
+  const opt = surface(shape);
   if (shape.kind === 'circle') {
     ground.createFixture(new Circle(Vec2(shape.x, shape.y), shape.r), opt);
   } else if (shape.kind === 'box') {
@@ -141,17 +172,47 @@ export class World {
   private readonly world = new PlanckWorld({ gravity: { x: 0, y: TUNING.gravity } });
   private readonly entries = new Map<string, Entry>();
   private readonly ground = this.world.createBody();
+  private readonly movers: Mover[] = [];
   private readonly arrowList: Arrows;
   private pending: WorldEvent[] = [];
   private hitImpulse = 0;
   private time = 0;
+  /** play 단계가 시작된 뒤 지난 시간(초)입니다. 움직이는 발판의 위치는 이 값만으로 정해집니다. */
+  private clock = 0;
+  /** 발판이 지금 위치에 놓인 맵입니다. */
+  private now: GameMap;
+  private foot: GameMap;
+  private footTick = 0;
 
   constructor(
     private readonly map: GameMap,
     private readonly mode: Mode,
   ) {
     this.arrowList = new Arrows(map);
-    for (const shape of map.shapes) addShape(this.ground, shape);
+    this.now = mapAt(map, 0);
+    this.foot = this.now;
+    for (const shape of map.shapes) {
+      if (shape.kind !== 'box' || !shape.move) {
+        addShape(this.ground, shape);
+        continue;
+      }
+      const body = this.world.createKinematicBody({ position: Vec2(shape.x, shape.y), angle: shape.angle ?? 0 });
+      body.createFixture(new Box(shape.w / 2, shape.h / 2), surface(shape));
+      this.movers.push({ shape, body });
+    }
+    this.world.on('pre-solve', (contact) => {
+      const a = contact.getFixtureA();
+      const b = contact.getFixtureB();
+      if (Math.max(a.getRestitution(), b.getRestitution()) < TUNING.bouncyRestitution) return;
+      const normal = contact.getWorldManifold(null)?.normal;
+      if (!normal) return;
+      const va = a.getBody().getLinearVelocity();
+      const vb = b.getBody().getLinearVelocity();
+      const closing = Math.abs((vb.x - va.x) * normal.x + (vb.y - va.y) * normal.y);
+      // 튕길 때마다 빨라져서 끝없이 솟지 않도록, 튕겨 나가는 속력에 한도를 둡니다.
+      const most = Math.max(TUNING.restitution, TUNING.bounceSpeedMax / Math.max(closing, 1e-6));
+      contact.setRestitution(Math.min(TUNING.bouncyRestitution, most));
+    });
     this.world.on('post-solve', (contact, impulse) => {
       if (!contact.getFixtureA().getUserData() && !contact.getFixtureB().getUserData()) return;
       this.hitImpulse = Math.max(this.hitImpulse, impulse.normalImpulses[0] ?? 0);
@@ -183,6 +244,8 @@ export class World {
       cooldown: 0,
       facing: 1,
       aimDir: [1, 0],
+      ride: null,
+      rideVx: 0,
       x,
       y,
       angle: 0,
@@ -214,16 +277,28 @@ export class World {
     if (entry) entry.input = { ...input };
   }
 
-  /** 1/60초를 진행하고 그동안 일어난 일을 돌려준다. */
-  step(): WorldEvent[] {
+  /**
+   * 1/60초를 진행하고 그동안 일어난 일을 돌려준다.
+   * clock은 이 step이 끝났을 때 play 단계가 시작된 뒤 지난 시간(초)이고, 움직이는 발판은 그 시간의 위치로 간다.
+   * 주지 않으면 지난 step보다 1/60초 뒤로 본다.
+   */
+  step(clock: number = this.clock + TUNING.step): WorldEvent[] {
     const events: WorldEvent[] = this.pending;
     this.pending = [];
     this.hitImpulse = 0;
+    this.clock = Math.max(0, clock);
+    this.moveTo(this.clock);
     for (const [id, entry] of this.entries) {
       if (entry.alive) this.drive(id, entry, events);
     }
     this.world.step(TUNING.step);
     this.time += TUNING.step;
+    this.now = mapAt(this.map, this.clock);
+    const tick = Math.floor(this.clock / FOOTING_STEP + 1e-9);
+    if (tick !== this.footTick) {
+      this.footTick = tick;
+      this.foot = this.now;
+    }
     for (const [id, entry] of this.entries) {
       if (!entry.alive || !entry.body) continue;
       const p = entry.body.getPosition();
@@ -250,7 +325,7 @@ export class World {
       angle: e.angle,
       alive: e.alive,
       heavy: e.heavy,
-      rope: e.rope?.anchor ?? null,
+      rope: e.rope ? this.anchorOf(e.rope) : null,
       aim: e.aim,
     }));
   }
@@ -294,16 +369,24 @@ export class World {
     entry.body.setAwake(true);
   }
 
-  /** 공에 걸린 줄의 고정점입니다. 줄이 없으면 null입니다. */
+  /** 공에 걸린 줄의 고정점이 지금 있는 곳입니다. 줄이 없으면 null입니다. */
   rope(id: string): readonly [number, number] | null {
-    return this.entries.get(id)?.rope?.anchor ?? null;
+    const rope = this.entries.get(id)?.rope;
+    return rope ? this.anchorOf(rope) : null;
   }
 
-  /** 원격 공의 줄을 받은 고정점에 겁니다. null이면 풉니다. 같은 고정점이면 다시 만들지 않습니다. */
+  /**
+   * 원격 공의 줄을 받은 고정점에 겁니다. null이면 풉니다. 같은 고정점이면 다시 만들지 않습니다.
+   * 움직이는 발판에 건 줄은 고정점이 발판과 함께 움직이므로, 받은 위치와 조금 어긋나도 같은 줄로 봅니다.
+   */
   setRope(id: string, anchor: readonly [number, number] | null): void {
     const entry = this.entries.get(id);
     if (!entry?.alive) return;
-    if (entry.rope && anchor && entry.rope.anchor[0] === anchor[0] && entry.rope.anchor[1] === anchor[1]) return;
+    if (entry.rope && anchor) {
+      const [x, y] = this.anchorOf(entry.rope);
+      const slack = entry.rope.mover ? MOVER_SLACK : 0;
+      if (Math.hypot(x - anchor[0], y - anchor[1]) <= slack) return;
+    }
     this.release(entry);
     if (anchor) this.attach(entry, anchor);
   }
@@ -334,7 +417,17 @@ export class World {
 
   /** 원격 주인의 화살을 받은 목록에 맞춥니다. 모르는 번호는 만들고(age만큼 미리 진행), 목록에 없는 것은 없앱니다. */
   syncShots(owner: string, shots: readonly ArrowShot[]): void {
-    for (const id of this.arrowList.sync(owner, shots, this.targets())) this.arrowHit(id, this.pending);
+    for (const id of this.arrowList.sync(owner, shots, this.targets(), this.clock)) this.arrowHit(id, this.pending);
+  }
+
+  /** 발판들이 지금 있는 위치의 도형입니다. 움직이는 발판이 없으면 맵의 도형 그대로입니다. */
+  shapes(): readonly Shape[] {
+    return this.now.shapes;
+  }
+
+  /** AI가 지형을 읽을 때 쓰는 맵입니다. 움직이는 발판은 0.1초마다 새 위치로 바뀝니다. */
+  footing(): GameMap {
+    return this.foot;
   }
 
   /** 날아가거나 꽂혀 있는 화살들의 모습입니다. */
@@ -351,7 +444,7 @@ export class World {
 
   /** 화살을 한 step 진행하고 맞은 공을 탈락시킵니다. */
   private stepArrows(events: WorldEvent[]): void {
-    const result = this.arrowList.step(this.targets());
+    const result = this.arrowList.step(this.targets(), this.clock);
     for (let i = 0; i < result.stuck; i++) events.push({ type: 'stick' });
     for (const id of result.hits) this.arrowHit(id, events);
   }
@@ -364,6 +457,58 @@ export class World {
     events.push({ type: 'out', id, x: entry.x, y: entry.y, cause: 'arrow' });
   }
 
+  /** 움직이는 발판을 clock초의 위치로 보냅니다. 위치는 매번 시간에서 새로 구하므로 오차가 쌓이지 않습니다. */
+  private moveTo(clock: number): void {
+    for (const { shape, body } of this.movers) {
+      if (!shape.move) continue;
+      const [ox, oy] = moveOffset(shape.move, clock);
+      const p = body.getPosition();
+      const dx = shape.x + ox - p.x;
+      const dy = shape.y + oy - p.y;
+      if (Math.hypot(dx, dy) > MOVER_SNAP) {
+        body.setTransform(Vec2(shape.x + ox, shape.y + oy), body.getAngle());
+        body.setLinearVelocity(Vec2(0, 0));
+      } else {
+        body.setLinearVelocity(Vec2(dx / TUNING.step, dy / TUNING.step));
+      }
+    }
+  }
+
+  /** 공이 딛고 있는 움직이는 발판입니다. 없으면 null입니다. */
+  private riding(body: Body): Body | null {
+    if (this.movers.length === 0) return null;
+    for (let edge = body.getContactList(); edge; edge = edge.next) {
+      const { contact, other } = edge;
+      if (!other?.isKinematic() || !contact.isTouching()) continue;
+      const normal = contact.getWorldManifold(null)?.normal;
+      if (!normal) continue;
+      // normal은 A에서 B를 향하므로, 공에서 발판을 향하는 방향으로 맞춥니다.
+      const down = contact.getFixtureA().getBody() === body ? normal.y : -normal.y;
+      if (down > RIDE_NORMAL) return other;
+    }
+    return null;
+  }
+
+  /**
+   * 움직이는 발판을 딛고 있는 공을 발판과 함께 움직입니다. 공은 구르기 때문에 마찰만으로는 발판을 따라가지 못합니다.
+   * 발판의 속도가 바뀐 만큼을 공에 그대로 더하고, 좌우를 누르지 않는 동안에는 발판과의 속도 차를 줄입니다.
+   */
+  private carry(entry: Entry, body: Body): void {
+    const ride = this.riding(body);
+    if (ride) {
+      const v = body.getLinearVelocity();
+      const rideVx = ride.getLinearVelocity().x;
+      let vx = v.x;
+      if (ride === entry.ride) vx += rideVx - entry.rideVx;
+      // 공기 저항은 발판에 대한 속도에만 걸리도록, 발판의 속도에 걸릴 몫을 미리 돌려줍니다.
+      vx += rideVx * TUNING.damping * TUNING.step;
+      if (entry.input.left === entry.input.right) vx -= (vx - rideVx) * RIDE_GRIP * TUNING.step;
+      if (vx !== v.x) body.setLinearVelocity(Vec2(vx, v.y));
+      entry.rideVx = rideVx;
+    }
+    entry.ride = ride;
+  }
+
   /** 입력에 따라 무게, 힘, 뛰기, 줄, 화살을 적용합니다. */
   private drive(id: string, entry: Entry, events: WorldEvent[]): void {
     const { body, fixture, input } = entry;
@@ -374,6 +519,7 @@ export class World {
       fixture.setDensity(heavy ? TUNING.heavyMass : 1);
       body.resetMassData();
     }
+    this.carry(entry, body);
     if (entry.local) {
       if (input.left !== input.right) entry.facing = input.right ? 1 : -1;
       if (this.mode === 'grapple') this.driveRope(id, entry, events);
@@ -398,7 +544,7 @@ export class World {
       this.release(entry);
     } else if (!entry.prevInput.special && entry.body) {
       const p = entry.body.getPosition();
-      const anchor = closestAbove(this.map, p.x, p.y, TUNING.ropeReach);
+      const anchor = closestAbove(this.now, p.x, p.y, TUNING.ropeReach);
       if (anchor) {
         this.attach(entry, anchor);
         events.push({ type: 'rope', id });
@@ -434,6 +580,7 @@ export class World {
       p.y + dir[1] * gap,
       dir[0] * speed,
       dir[1] * speed,
+      this.clock,
     );
     if (stuck) events.push({ type: 'stick' });
     entry.cooldown = TUNING.arrowCooldown;
@@ -450,22 +597,40 @@ export class World {
     return [dx / len, dy / len];
   }
 
-  /** 발판의 고정점과 공 사이에 줄을 겁니다. 길이는 지금의 거리입니다. */
+  /** 줄의 고정점이 지금 있는 곳입니다. */
+  private anchorOf(rope: Rope): Point {
+    if (!rope.mover) return rope.anchor;
+    const p = rope.mover.getWorldPoint(Vec2(rope.anchor[0], rope.anchor[1]));
+    return [p.x, p.y];
+  }
+
+  /** (x, y)가 표면에 놓인 움직이는 발판입니다. 없으면 null입니다. */
+  private moverAt(x: number, y: number): Body | null {
+    for (const { shape, body } of this.movers) {
+      const local = body.getLocalPoint(Vec2(x, y));
+      if (Math.abs(local.x) <= shape.w / 2 + MOVER_SLACK && Math.abs(local.y) <= shape.h / 2 + MOVER_SLACK) return body;
+    }
+    return null;
+  }
+
+  /** 발판의 고정점과 공 사이에 줄을 겁니다. 길이는 지금의 거리입니다. 움직이는 발판에 걸면 고정점이 발판을 따라 움직입니다. */
   private attach(entry: Entry, anchor: Point): void {
     if (!entry.body) return;
     this.release(entry);
     const p = entry.body.getPosition();
+    const mover = this.moverAt(anchor[0], anchor[1]);
+    const local = mover ? mover.getLocalPoint(Vec2(anchor[0], anchor[1])) : Vec2(anchor[0], anchor[1]);
     const joint = this.world.createJoint(
       new RopeJoint({
-        bodyA: this.ground,
+        bodyA: mover ?? this.ground,
         bodyB: entry.body,
-        localAnchorA: Vec2(anchor[0], anchor[1]),
+        localAnchorA: local,
         localAnchorB: Vec2(0, 0),
         maxLength: Math.hypot(anchor[0] - p.x, anchor[1] - p.y),
         collideConnected: true,
       }),
     );
-    if (joint) entry.rope = { joint, anchor };
+    if (joint) entry.rope = { joint, anchor: mover ? [local.x, local.y] : anchor, mover };
   }
 
   /** 줄이 있으면 풉니다. */

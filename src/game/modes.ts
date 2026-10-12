@@ -25,6 +25,8 @@ export const TUNING = {
   gravity: 20,
   radius: 0.5,
   restitution: 0.5,
+  bouncyRestitution: 1.25,
+  bounceSpeedMax: 12,
   friction: 0.3,
   accel: 18,
   jumpSpeed: 9,

@@ -149,10 +149,11 @@ function circleT(a: Point, b: Point, cx: number, cy: number, r: number): number 
   return null;
 }
 
-/** 선분 a→b가 발판에 처음 닿는 지점입니다. 닿지 않으면 null입니다. */
-export function segmentHit(map: GameMap, a: Point, b: Point): Point | null {
+/** 선분 a→b가 발판에 처음 닿는 지점과 그 발판의 도형 번호입니다. 닿지 않으면 null입니다. */
+export function segmentHitAt(map: GameMap, a: Point, b: Point): { point: Point; shape: number } | null {
   let best: number | null = null;
-  for (const shape of map.shapes) {
+  let hit = -1;
+  map.shapes.forEach((shape, i) => {
     const pts = corners(shape);
     const ts = pts
       ? edges(pts).map(([c, d]) => segmentT(a, b, c, d))
@@ -160,10 +161,19 @@ export function segmentHit(map: GameMap, a: Point, b: Point): Point | null {
         ? [circleT(a, b, shape.x, shape.y, shape.r)]
         : [];
     for (const t of ts) {
-      if (t !== null && (best === null || t < best)) best = t;
+      if (t !== null && (best === null || t < best)) {
+        best = t;
+        hit = i;
+      }
     }
-  }
-  return best === null ? null : [a[0] + best * (b[0] - a[0]), a[1] + best * (b[1] - a[1])];
+  });
+  if (best === null) return null;
+  return { point: [a[0] + best * (b[0] - a[0]), a[1] + best * (b[1] - a[1])], shape: hit };
+}
+
+/** 선분 a→b가 발판에 처음 닿는 지점입니다. 닿지 않으면 null입니다. */
+export function segmentHit(map: GameMap, a: Point, b: Point): Point | null {
+  return segmentHitAt(map, a, b)?.point ?? null;
 }
 
 /** 도형 윗면의 가운데 지점입니다. 도형의 가로 가운데에서 가장 위에 있는 표면을 씁니다. */
