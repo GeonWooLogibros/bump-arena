@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { Bot } from '../src/game/bot';
 import type { BotSense } from '../src/game/bot';
+import { SKILLS, THINK_FLOOR } from '../src/game/bot-skill';
+import { terrainOf } from '../src/game/bot-terrain';
 import { MAPS, mapAt } from '../src/game/maps';
 import { NO_INPUT } from '../src/physics/world';
 import type { Input } from '../src/physics/world';
@@ -267,5 +269,51 @@ describe('움직이는 발판 기다리기', () => {
     const bot = new Bot(() => 0);
     const inputs = watch(bot, sense({ map: down, me: at(10.5, 13.5, 6), others: above }), 0.3);
     expect(inputs.some((input) => input.up && input.right)).toBe(true);
+  });
+});
+
+describe('수준', () => {
+  it('수준을 주지 않으면 보통과 똑같이 움직입니다', () => {
+    const situation = sense({ others: [foe(17)] });
+    expect(watch(new Bot(seeded(7)), situation, 6)).toEqual(watch(new Bot(seeded(7), SKILLS.normal), situation, 6));
+  });
+
+  it('쉬움은 상대가 자리를 옮겨도 한동안은 지난번에 본 쪽으로 갑니다', () => {
+    const moved = sense({ others: [foe(10)] });
+    const easy = new Bot(() => 0.5, SKILLS.easy);
+    expect(easy.think(sense({ others: [foe(22)] }), TICK).right).toBe(true);
+    expect(easy.think(moved, TICK).right).toBe(true);
+    const late = watch(easy, moved, SKILLS.easy.notice + TICK);
+    expect(late[late.length - 1].left).toBe(true);
+
+    const normal = new Bot(() => 0.5);
+    normal.think(sense({ others: [foe(22)] }), TICK);
+    expect(normal.think(moved, TICK).left).toBe(true);
+  });
+
+  it('쉬움은 지난번에 본 상대가 그사이에 탈락했으면 쫓지 않습니다', () => {
+    const easy = new Bot(() => 0.5, SKILLS.easy);
+    easy.think(sense({ others: [foe(22)] }), TICK);
+    expect(easy.think(sense(), TICK)).toEqual(NO_INPUT);
+  });
+
+  it('쉬움은 보통보다 자리 끝에서 멀리 멈춥니다', () => {
+    const edge = terrainOf(flat).ledges[0].x1;
+    const near = sense({ me: at(edge - 0.6) });
+    expect(new Bot(() => 0.5).think(near, TICK).left).toBe(false);
+    expect(new Bot(() => 0.5, SKILLS.easy).think(near, TICK).left).toBe(true);
+  });
+
+  it('생각하는 간격을 아무리 짧게 주어도 하한보다 자주 생각하지 않습니다', () => {
+    const bot = new Bot(() => 0, { ...SKILLS.hard, think: 0.01 });
+    const step = 1 / 60;
+    const before = sense({ others: [foe(22)] });
+    while (!bot.think(before, step).right);
+    // 방금 생각했으므로, 상대가 반대쪽으로 옮겨 가도 하한이 지나기 전에는 입력을 바꾸지 않습니다.
+    const moved = sense({ others: [foe(10)] });
+    let held = 0;
+    while (bot.think(moved, step).right) held += step;
+    expect(held).toBeGreaterThanOrEqual(THINK_FLOOR - step - 1e-9);
+    expect(held).toBeLessThan(THINK_FLOOR + step);
   });
 });

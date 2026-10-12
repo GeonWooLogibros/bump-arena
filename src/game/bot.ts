@@ -4,20 +4,15 @@ import type { Mode } from './modes';
 import { NO_INPUT } from '../physics/world';
 import type { Input } from '../physics/world';
 import { ARROW_CHARGE_MAX, ARROW_CHARGE_MIN, aimShot } from './bot-aim';
+import { SKILLS, THINK_FLOOR } from './bot-skill';
+import type { BotSkill } from './bot-skill';
 import { GRID, GROUND_GAP, LAND_INSET, crossing, heightAt, leapSpeed, ledgeUnder, terrainOf } from './bot-terrain';
 import type { Ledge, Terrain } from './bot-terrain';
 
-/** AI가 상황을 다시 보고 입력을 고르는 간격(초)입니다. */
-const THINK_INTERVAL = 0.15;
-
 /** 멈출 때 낼 수 있다고 어림하는 감속(m/s²)입니다. 반응이 늦는 만큼 실제 가속보다 작게 잡습니다. */
 const BRAKE = TUNING.accel * 0.8;
-/** 자리 끝에서 이만큼 안쪽까지만 다닙니다(m). */
-const EDGE_MARGIN = 0.45;
 /** 평소에 달리는 최고 속력(m/s)입니다. */
 const RUN_SPEED = 7;
-/** 상대에게 달려들 때의 최고 속력(m/s)입니다. */
-const CHARGE_SPEED = 13;
 /** 목표 지점에 이만큼 가까우면 도착한 것으로 봅니다(m). */
 const ARRIVE_SLACK = 0.15;
 /** 원하는 속력과 이만큼 차이 나야 힘을 줍니다(m/s). */
@@ -36,9 +31,6 @@ const RUN_UP_TIME = 0.5;
 
 /** 바로 위에 있어서 올라갈 수 없는 자리를 돌아갈 곳으로 고르지 않게 더하는 값(m)입니다. */
 const UNDER_COST = 100;
-/** 자리 밖으로 밀려난 뒤 벽을 차거나 줄을 걸기 시작하기까지 걸리는 시간(초)의 범위입니다. */
-const RESCUE_DELAY_MIN = 0.3;
-const RESCUE_DELAY_MAX = 0.6;
 /** 자리 윗면보다 이만큼(m) 넘게 떨어지면 올라오기를 포기합니다. */
 const RESCUE_DEPTH = 2.5;
 /** 떨어지다가 자리 모서리가 이 거리(m) 안에 있을 때만 줄을 겁니다. */
@@ -62,8 +54,6 @@ const HOLD_RANGE = 2;
 /** 높은 곳에서 버티는 시간(초)의 범위입니다. 이 시간이 지나면 상대가 오지 않아도 달려 내려갑니다. */
 const HOLD_TIME_MIN = 2;
 const HOLD_TIME_MAX = 8;
-/** 달려드는 상대가 이 거리(m) 안에 있으면 자리 끝이 가까워도 속력을 줄이지 않고 들이받습니다. */
-const RAM_RANGE = 5;
 /** 상대가 이 속력(m/s)보다 빠르게 달아나고 있으면 들이받지 않고 평소처럼 자리 끝을 조심합니다. */
 const RAM_DRIFT = 6;
 /** 교착을 풀 때 물러나지 않고 뛰어넘을 확률입니다. */
@@ -94,8 +84,6 @@ const HEAVY_RANGE = 1.3;
 /** 무거워지기를 누르고 있는 시간(초)의 범위입니다. */
 const HEAVY_MIN = 0.2;
 const HEAVY_MAX = 0.5;
-/** 부딪치기 직전에 때맞춰 무거워질 확률입니다. */
-const HEAVY_CHANCE = 0.7;
 /** 무거워지기를 다시 쓰기까지 쉬는 시간(초)의 범위입니다. */
 const HEAVY_REST_MIN = 0.5;
 const HEAVY_REST_MAX = 1.2;
@@ -106,9 +94,6 @@ const STUN_JOLT = 3.5;
 const STUN_RANGE = 2;
 /** 튕겨 나가는 속력이 이보다 빨라야 밀린 것으로 봅니다(m/s). 밀어낸 쪽은 멈추지 않고 계속 몰아붙입니다. */
 const STUN_SPEED = 3;
-/** 튕겨 나간 뒤 손을 놓고 있는 시간입니다. 튕겨 나가는 속력 1m/s마다 이 범위(초)에서 고른 값만큼 길어집니다. */
-const STUN_RATE_MIN = 0.08;
-const STUN_RATE_MAX = 0.15;
 /** 손을 놓고 있는 시간(초)의 상한입니다. */
 const STUN_CAP = 1.2;
 /** 한 번 튕겨 나갈 때마다 손을 놓고 있는 시간과 그 상한이 이 비율만큼 늘어납니다. */
@@ -116,12 +101,6 @@ const BRUISE_GAIN = 0.5;
 /** 아무리 많이 맞아도 손을 놓고 있는 시간은 이보다 길어지지 않습니다(초). */
 const STUN_CAP_MAX = 3;
 
-/** 라운드가 시작된 뒤 처음 화살을 모으기까지 기다리는 시간(초)의 범위입니다. */
-const FIRST_SHOT_MIN = 2.5;
-const FIRST_SHOT_MAX = 4;
-/** 쏜 뒤 다시 모으기까지 더 쉬는 시간(초)의 범위입니다. TUNING.arrowCooldown에 더합니다. */
-const ARROW_REST_MIN = 0.2;
-const ARROW_REST_MAX = 1;
 /** 움직이는 발판을 기다릴 때 자리 끝에서 이만큼(m) 안쪽에 섭니다. */
 const WAIT_INSET = 1.2;
 /** 쏠 기회가 이 시간(초) 동안 없으면 상대 쪽으로 건너갑니다. */
@@ -181,32 +160,7 @@ function steer(me: Me, goal: number, cap: number): Input {
 }
 
 /**
- * 자리 끝을 넘어가지 않도록 입력을 고칩니다. 멈출 거리가 모자라면 반대로 밉니다.
- * ramming이면 앞에 있는 상대가 속력을 받아 줄 것으로 보고 미리 멈추지 않습니다. 끝자리를 넘어선 뒤에만 되돌아옵니다.
- */
-function guard(input: Input, me: Me, ledge: Ledge, ramming = false): Input {
-  const margin = Math.min(EDGE_MARGIN, (ledge.x1 - ledge.x0) / 2 - 0.1);
-  const stop = ramming ? me.x : me.x + me.vx * THINK_INTERVAL + (me.vx * Math.abs(me.vx)) / (2 * BRAKE);
-  if (Math.max(stop, me.x) > ledge.x1 - margin) {
-    input.right = false;
-    input.left = me.vx > 0 || me.x > ledge.x1 - margin;
-  } else if (Math.min(stop, me.x) < ledge.x0 + margin) {
-    input.left = false;
-    input.right = me.vx < 0 || me.x < ledge.x0 + margin;
-  }
-  return input;
-}
-
-/** 손을 놓은 채 time초 동안 구르거나 비탈을 미끄러져도 자리 안에 남는지 봅니다. */
-function settles(me: Me, ledge: Ledge, time: number): boolean {
-  const slope = heightAt(ledge, me.x + GRID) - heightAt(ledge, me.x - GRID);
-  const slide = (TUNING.gravity * slope) / (2 * GRID);
-  const x = me.x + me.vx * time + 0.5 * slide * time * time;
-  return x > ledge.x0 + EDGE_MARGIN && x < ledge.x1 - EDGE_MARGIN;
-}
-
-/**
- * 스스로 싸우는 AI입니다. 0.15초마다 상황을 보고 입력을 고칩니다.
+ * 스스로 싸우는 AI입니다. 수준에 따라 정해진 간격(보통은 0.15초)마다 상황을 보고 입력을 고칩니다.
  * 상대를 골라 같은 자리까지 건너간 뒤, 모드에 맞게 부딪치거나 화살을 쏩니다.
  */
 export class Bot {
@@ -232,6 +186,9 @@ export class Bot {
   /** 지난번에 본 다른 공들의 x와, 그 사이에 움직인 가로 속도(m/s)입니다. */
   private seen = new Map<string, { x: number; vx: number }>();
   private stunUntil = 0;
+  /** 마지막으로 살펴본 다른 공들과, 다시 살필 때입니다. */
+  private noticed: BotSense['others'] = [];
+  private noticeAt = 0;
   /** 이번 라운드에 튕겨 나간 횟수입니다. */
   private bruises = 0;
   private leap: { ledge: number; x: number; since: number } | null = null;
@@ -245,12 +202,19 @@ export class Bot {
   private wanderX = 0;
   private wanderUntil = 0;
 
-  /** random은 0 이상 1 미만의 난수를 돌려주는 함수입니다. */
-  constructor(private readonly random: () => number = Math.random) {
-    this.nextShotAt = this.between(FIRST_SHOT_MIN, FIRST_SHOT_MAX);
+  /** 상황을 다시 보고 입력을 고르는 간격(초)입니다. */
+  private readonly interval: number;
+
+  /** random은 0 이상 1 미만의 난수를 돌려주는 함수, skill은 수준에 따른 조절값입니다. */
+  constructor(
+    private readonly random: () => number = Math.random,
+    private readonly skill: BotSkill = SKILLS.normal,
+  ) {
+    this.interval = Math.max(THINK_FLOOR, skill.think);
+    this.nextShotAt = this.between(...skill.firstShot);
     this.lastChanceAt = this.nextShotAt;
     // 여러 AI가 같은 프레임에 한꺼번에 생각하지 않도록 처음 생각하는 때를 서로 어긋나게 합니다.
-    this.elapsed = this.between(0, THINK_INTERVAL);
+    this.elapsed = this.between(0, this.interval);
   }
 
   /**
@@ -264,7 +228,7 @@ export class Bot {
       this.rest();
       this.held = { ...NO_INPUT };
     }
-    if (this.elapsed >= THINK_INTERVAL - 1e-9) {
+    if (this.elapsed >= this.interval - 1e-9) {
       this.held = this.decide(sense);
       this.elapsed = 0;
     }
@@ -275,10 +239,35 @@ export class Bot {
     return min + (max - min) * this.random();
   }
 
+  /**
+   * 자리 끝을 넘어가지 않도록 입력을 고칩니다. 멈출 거리가 모자라면 반대로 밉니다.
+   * ramming이면 앞에 있는 상대가 속력을 받아 줄 것으로 보고 미리 멈추지 않습니다. 끝자리를 넘어선 뒤에만 되돌아옵니다.
+   */
+  private guard(input: Input, me: Me, ledge: Ledge, ramming = false): Input {
+    const margin = Math.min(this.skill.edgeMargin, (ledge.x1 - ledge.x0) / 2 - 0.1);
+    const stop = ramming ? me.x : me.x + me.vx * this.interval + (me.vx * Math.abs(me.vx)) / (2 * BRAKE);
+    if (Math.max(stop, me.x) > ledge.x1 - margin) {
+      input.right = false;
+      input.left = me.vx > 0 || me.x > ledge.x1 - margin;
+    } else if (Math.min(stop, me.x) < ledge.x0 + margin) {
+      input.left = false;
+      input.right = me.vx < 0 || me.x < ledge.x0 + margin;
+    }
+    return input;
+  }
+
+  /** 손을 놓은 채 time초 동안 구르거나 비탈을 미끄러져도 자리 안에 남는지 봅니다. */
+  private settles(me: Me, ledge: Ledge, time: number): boolean {
+    const slope = heightAt(ledge, me.x + GRID) - heightAt(ledge, me.x - GRID);
+    const slide = (TUNING.gravity * slope) / (2 * GRID);
+    const x = me.x + me.vx * time + 0.5 * slide * time * time;
+    return x > ledge.x0 + this.skill.edgeMargin && x < ledge.x1 - this.skill.edgeMargin;
+  }
+
   /** 모으던 화살을 놓은 것으로 하고, 다시 모으기까지 쉴 시간을 정합니다. */
   private rest(): void {
     this.shot = null;
-    this.nextShotAt = this.clock + TUNING.arrowCooldown + this.between(ARROW_REST_MIN, ARROW_REST_MAX);
+    this.nextShotAt = this.clock + TUNING.arrowCooldown + this.between(...this.skill.arrowRest);
     this.lastChanceAt = this.clock;
   }
 
@@ -292,20 +281,20 @@ export class Bot {
     this.lastVx = me.vx;
     const seen = new Map<string, { x: number; vx: number }>();
     for (const o of sense.others) {
-      seen.set(o.id, { x: o.x, vx: (o.x - (this.seen.get(o.id)?.x ?? o.x)) / THINK_INTERVAL });
+      seen.set(o.id, { x: o.x, vx: (o.x - (this.seen.get(o.id)?.x ?? o.x)) / this.interval });
     }
     this.seen = seen;
     const here = ledgeUnder(terrain, me.x, me.y);
     const ledge = terrain.ledges[here];
     if (this.shot) {
       // 모으는 동안에는 움직일 수 없으므로, 자리 밖으로 밀려나겠으면 그만 놓고 몸부터 챙깁니다.
-      if (ledge && settles(me, ledge, THINK_INTERVAL * 2)) return this.aim(sense, this.shot);
+      if (ledge && this.settles(me, ledge, this.interval * 2)) return this.aim(sense, this.shot);
       this.rest();
     }
     if (jolt && this.thrown(sense)) {
       // 맞을수록 오래 멍해지므로, 싸움이 길어지면 한 번 밀린 쪽이 끝까지 밀려 나갑니다.
       const worn = 1 + this.bruises * BRUISE_GAIN;
-      const daze = Math.abs(me.vx) * this.between(STUN_RATE_MIN, STUN_RATE_MAX) * worn;
+      const daze = Math.abs(me.vx) * this.between(...this.skill.stunRate) * worn;
       this.stunUntil = this.clock + Math.min(STUN_CAP_MAX, STUN_CAP * worn, daze);
       this.bruises++;
     }
@@ -319,14 +308,29 @@ export class Bot {
     }
     if (!ledge) return this.recover(sense, terrain);
     // 다음에 자리 밖으로 밀려났을 때 벽을 차거나 줄을 걸기까지 걸릴 시간을 미리 정해 둡니다.
-    this.rescueAt = this.clock + this.between(RESCUE_DELAY_MIN, RESCUE_DELAY_MAX);
-    if (sense.roped) return guard(steer(me, me.x, RUN_SPEED), me, ledge);
+    this.rescueAt = this.clock + this.between(...this.skill.rescueDelay);
+    if (sense.roped) return this.guard(steer(me, me.x, RUN_SPEED), me, ledge);
 
-    const target = this.pick(sense, terrain, here);
-    if (!target) return guard(steer(me, me.x, RUN_SPEED), me, ledge);
+    const view = this.watch(sense);
+    const target = this.pick(view, terrain, here);
+    if (!target) return this.guard(steer(me, me.x, RUN_SPEED), me, ledge);
     return mode === 'arrows'
-      ? this.archer(sense, terrain, here, target, grounded)
-      : this.brawl(sense, terrain, here, target, grounded);
+      ? this.archer(view, terrain, here, target, grounded)
+      : this.brawl(view, terrain, here, target, grounded);
+  }
+
+  /**
+   * 상대를 고르고 싸울 때 보는 상황입니다. 상대를 다시 살필 때가 되기 전에는 다른 공들이 지난번에 본 곳에 있다고 봅니다.
+   * 내 위치와 속도는 늘 지금 값이므로, 상대를 늦게 알아차려도 자리 끝은 제때 살핍니다.
+   */
+  private watch(sense: BotSense): BotSense {
+    if (this.skill.notice <= 0) return sense;
+    if (this.clock >= this.noticeAt) {
+      this.noticed = sense.others;
+      this.noticeAt = this.clock + this.skill.notice;
+    }
+    // 그사이에 탈락한 공은 뺍니다.
+    return { ...sense, others: this.noticed.filter((o) => sense.others.some((now) => now.id === o.id)) };
   }
 
   /** 가까운 공에게 부딪쳐 그 공에게서 멀어지는 쪽으로 튕겨 나가고 있는지 봅니다. */
@@ -388,7 +392,7 @@ export class Bot {
   /** 공중에서 ledge의 x 지점에 내리도록 움직입니다. 윗면보다 낮아지면 벽을 차고, 갈고리 모드에서는 줄을 겁니다. */
   private fly(sense: BotSense, ledge: Ledge, x: number): Input {
     const { me, mode } = sense;
-    const input = steer(me, x, CHARGE_SPEED);
+    const input = steer(me, x, this.skill.chargeSpeed);
     const sunk = me.y + TUNING.radius - heightAt(ledge, x);
     // 윗면보다 너무 깊이 떨어졌으면 벽을 차거나 줄을 걸어도 올라올 수 없다고 보고 포기합니다.
     if (sunk <= 0.1 || sunk > RESCUE_DEPTH || this.clock < this.rescueAt) return input;
@@ -418,27 +422,27 @@ export class Bot {
     if (!way && hop >= 0) {
       // 움직이는 발판이 아직 멀리 있으면, 그쪽 끝에서 조금 물러나 발판이 다가오기를 기다립니다.
       const side = terrain.ledges[hop].x0 >= ledge.x1 ? ledge.x1 - WAIT_INSET : ledge.x0 + WAIT_INSET;
-      return guard(steer(me, Math.max(ledge.x0, Math.min(ledge.x1, side)), RUN_SPEED), me, ledge);
+      return this.guard(steer(me, Math.max(ledge.x0, Math.min(ledge.x1, side)), RUN_SPEED), me, ledge);
     }
     // 건널 수 없으면 상대와 가까운 쪽 끝에서 기다립니다.
-    if (!way) return guard(steer(me, target.x, RUN_SPEED), me, ledge);
+    if (!way) return this.guard(steer(me, target.x, RUN_SPEED), me, ledge);
     // 마주 보고 동시에 뛰어 틈 위에서 부딪치지 않도록, 건너기로 마음먹은 뒤 잠깐씩 다르게 뜸을 들입니다.
     if (here !== this.crossFrom || hop !== this.crossTo) {
       this.crossFrom = here;
       this.crossTo = hop;
       this.crossAt = this.clock + this.between(0, CROSS_WAIT_MAX);
     }
-    if (this.clock < this.crossAt) return guard(steer(me, me.x, RUN_SPEED), me, ledge);
+    if (this.clock < this.crossAt) return this.guard(steer(me, me.x, RUN_SPEED), me, ledge);
     // 자리 끝까지는 조심해서 다가가고, 지금 속력으로 건너편에 닿겠다 싶을 때만 뜁니다.
     const toEdge = Math.max(0, way.dir * (way.edge - me.x));
     const enough = way.dir * me.vx >= leapSpeed(way, toEdge);
     if (grounded && toEdge <= LEAP_FROM && enough) {
       this.leap = { ledge: hop, x: way.land, since: this.clock };
-      return { ...rush(me, way.dir, CHARGE_SPEED), up: true };
+      return { ...rush(me, way.dir, this.skill.chargeSpeed), up: true };
     }
-    if (toEdge <= EDGE_MARGIN * 2 && !enough) this.runUpUntil = this.clock + RUN_UP_TIME;
+    if (toEdge <= this.skill.edgeMargin * 2 && !enough) this.runUpUntil = this.clock + RUN_UP_TIME;
     const dir = this.clock < this.runUpUntil ? -way.dir : way.dir;
-    return guard(rush(me, dir, RUN_SPEED), me, ledge);
+    return this.guard(rush(me, dir, RUN_SPEED), me, ledge);
   }
 
   /** 클래식·갈고리에서 상대에게 달려들어 부딪치고, 물러났다가 다시 달려듭니다. */
@@ -476,7 +480,7 @@ export class Bot {
       if (dir === this.hopDir && grounded && Math.abs(dx) < HOP_RANGE) input.up = true;
       if (dir !== this.hopDir && Math.abs(dx) > HOP_CLEAR) this.tactic = 'charge';
     } else {
-      input = rush(me, dir, CHARGE_SPEED);
+      input = rush(me, dir, this.skill.chargeSpeed);
       if (grounded && me.y - target.y >= JUMP_IF_ABOVE && Math.abs(dx) < JUMP_IF_NEAR) input.up = true;
     }
     if (mode === 'classic') {
@@ -484,10 +488,10 @@ export class Bot {
       if (
         this.tactic !== 'retreat' &&
         this.clock >= this.heavyReadyAt &&
-        dist < HEAVY_RANGE + closing * THINK_INTERVAL
+        dist < HEAVY_RANGE + closing * this.interval
       ) {
         // 때를 놓치는 경우도 있어야 한쪽만 무거운 채로 부딪쳐 승부가 납니다.
-        this.heavyUntil = this.random() < HEAVY_CHANCE ? this.clock + this.between(HEAVY_MIN, HEAVY_MAX) : this.clock;
+        this.heavyUntil = this.random() < this.skill.heavyChance ? this.clock + this.between(HEAVY_MIN, HEAVY_MAX) : this.clock;
         this.heavyReadyAt = this.heavyUntil + this.between(HEAVY_REST_MIN, HEAVY_REST_MAX);
       }
       input.special = this.clock < this.heavyUntil - 1e-9;
@@ -495,17 +499,17 @@ export class Bot {
     // 달아나는 상대는 부딪쳐도 속력을 받아 주지 못하므로, 거의 서 있거나 다가오는 상대만 그대로 들이받습니다.
     const ramming =
       this.tactic === 'charge' &&
-      Math.abs(dx) < RAM_RANGE &&
+      Math.abs(dx) < this.skill.ramRange &&
       target.x > ledge.x0 &&
       target.x < ledge.x1 &&
       dir * (this.seen.get(target.id)?.vx ?? 0) < RAM_DRIFT;
-    return guard(input, me, ledge, ramming);
+    return this.guard(input, me, ledge, ramming);
   }
 
   /** 상대 반대쪽으로 물러날 곳을 정합니다. 그쪽이 오르막이면 내리막 힘을 받아 달려들 수 있게 꼭대기까지 올라갑니다. */
   private startRetreat(me: Me, ledge: Ledge, dir: number): void {
-    const lo = ledge.x0 + EDGE_MARGIN * 2;
-    const hi = Math.max(lo, ledge.x1 - EDGE_MARGIN * 2);
+    const lo = ledge.x0 + this.skill.edgeMargin * 2;
+    const hi = Math.max(lo, ledge.x1 - this.skill.edgeMargin * 2);
     const clamp = (x: number) => Math.max(lo, Math.min(hi, x));
     let goal = clamp(me.x - dir * this.between(BACK_OFF_MIN, BACK_OFF_MAX));
     for (let x = clamp(me.x - dir); Math.abs(x - me.x) <= HIGH_GROUND_REACH; x -= dir) {
@@ -532,10 +536,10 @@ export class Bot {
   private archer(sense: BotSense, terrain: Terrain, here: number, target: Other, grounded: boolean): Input {
     const { me } = sense;
     const ledge = terrain.ledges[here];
-    if (this.clock >= this.nextShotAt && grounded && settles(me, ledge, ARROW_CHARGE_MAX)) {
+    if (this.clock >= this.nextShotAt && grounded && this.settles(me, ledge, ARROW_CHARGE_MAX)) {
       const prefer = this.between(ARROW_CHARGE_MIN, ARROW_CHARGE_MAX);
       for (const other of [target, ...sense.others.filter((o) => o !== target)]) {
-        const plan = aimShot(sense.map, me, other, prefer, ARROW_CHARGE_MIN);
+        const plan = aimShot(sense.map, me, other, prefer, ARROW_CHARGE_MIN, this.skill.aimTolerance);
         if (!plan) continue;
         this.shot = { ...plan, id: other.id, prefer, since: this.clock };
         this.lastChanceAt = this.clock;
@@ -548,8 +552,8 @@ export class Bot {
     }
     if (this.clock >= this.wanderUntil) {
       this.wanderUntil = this.clock + this.between(WANDER_MIN, WANDER_MAX);
-      const lo = ledge.x0 + EDGE_MARGIN * 2;
-      const hi = Math.max(lo, ledge.x1 - EDGE_MARGIN * 2);
+      const lo = ledge.x0 + this.skill.edgeMargin * 2;
+      const hi = Math.max(lo, ledge.x1 - this.skill.edgeMargin * 2);
       const clamp = (x: number) => Math.max(lo, Math.min(hi, x));
       if (ledgeUnder(terrain, target.x, target.y) === here) {
         const side = me.x >= target.x ? 1 : -1;
@@ -560,19 +564,27 @@ export class Bot {
         this.wanderX = this.between(lo, hi);
       }
     }
-    return guard(steer(me, this.wanderX, RUN_SPEED), me, ledge);
+    return this.guard(steer(me, this.wanderX, RUN_SPEED), me, ledge);
   }
 
   /** 모으는 동안 겨누는 방향을 고쳐 잡습니다. 너무 오래 모이지 않으면 그만둡니다. */
   private aim(sense: BotSense, shot: Shot): Input {
     const charge = sense.charge * TUNING.arrowMaxCharge;
-    if (this.clock - shot.since > TUNING.arrowCooldown + ARROW_CHARGE_MAX + THINK_INTERVAL) {
+    if (this.clock - shot.since > TUNING.arrowCooldown + ARROW_CHARGE_MAX + this.interval) {
       this.rest();
       return { ...NO_INPUT };
     }
     const target = sense.others.find((o) => o.id === shot.id);
     const plan =
-      target && aimShot(sense.map, sense.me, target, shot.prefer, Math.max(ARROW_CHARGE_MIN, charge + TUNING.step));
+      target &&
+      aimShot(
+        sense.map,
+        sense.me,
+        target,
+        shot.prefer,
+        Math.max(ARROW_CHARGE_MIN, charge + TUNING.step),
+        this.skill.aimTolerance,
+      );
     if (plan) {
       shot.keys = plan.keys;
       shot.release = plan.release;

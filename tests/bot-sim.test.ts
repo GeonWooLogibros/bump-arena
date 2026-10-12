@@ -1,6 +1,8 @@
 import { beforeAll, describe, expect, it } from 'vitest';
 import { Bot } from '../src/game/bot';
 import type { BotSense } from '../src/game/bot';
+import { DIFFICULTIES, SKILLS } from '../src/game/bot-skill';
+import type { Difficulty } from '../src/game/bot-skill';
 import { MAPS } from '../src/game/maps';
 import type { GameMap } from '../src/game/maps';
 import { MODES, TUNING } from '../src/game/modes';
@@ -14,11 +16,26 @@ const SELF_WINDOW = 2;
 /** 두 공의 중심이 이 거리(m) 안이면 닿은 것으로 봅니다. */
 const TOUCH = TUNING.radius * 2 + 0.15;
 const SEEDS = [1, 2, 3, 4, 5];
-/** 기준이 한 시드 묶음에서만 우연히 맞는 일이 없도록, 서로 다른 두 묶음에서 따로 확인합니다. */
-const SEED_SETS = [
-  { name: '시드 1~5', seeds: SEEDS },
-  { name: '시드 6~10', seeds: [6, 7, 8, 9, 10] },
+/**
+ * 기준이 한 시드 묶음에서만 우연히 맞는 일이 없도록, 서로 다른 두 묶음에서 따로 확인합니다.
+ * 쉬움과 어려움도 같은 기준을 지키는지 한 묶음씩 확인합니다.
+ */
+const SEED_SETS: { name: string; seeds: number[]; skill: Difficulty }[] = [
+  { name: '보통, 시드 1~5', seeds: SEEDS, skill: 'normal' },
+  { name: '보통, 시드 6~10', seeds: [6, 7, 8, 9, 10], skill: 'normal' },
+  { name: '쉬움, 시드 1~5', seeds: SEEDS, skill: 'easy' },
+  { name: '어려움, 시드 1~5', seeds: SEEDS, skill: 'hard' },
 ];
+/** 수준이 다른 AI 둘을 붙일 때 모드·맵마다 돌리는 시드입니다. */
+const DUEL_SEEDS = [1, 2, 3, 4, 5, 6];
+/** 수준끼리의 대결입니다. 앞이 더 높은 수준입니다. */
+const DUELS: { name: string; strong: Difficulty; weak: Difficulty }[] = [
+  { name: '어려움 대 보통', strong: 'hard', weak: 'normal' },
+  { name: '보통 대 쉬움', strong: 'normal', weak: 'easy' },
+];
+const SKILL_NAMES = Object.fromEntries(DIFFICULTIES.map((d) => [d.id, d.name])) as Record<Difficulty, string>;
+/** 시드 1~5로 돌린 같은 수준끼리의 480판입니다. 수준끼리 자멸이 얼마나 잦은지 견주는 데 씁니다. */
+const mirrors = new Map<Difficulty, Game[]>();
 const COUNTS = [2, 4];
 
 /** 시드가 고정된 난수(mulberry32)입니다. */
@@ -44,9 +61,10 @@ interface Game {
   survivors: string[];
 }
 
-/** 시작 위치입니다. dummy가 있으면 그 공은 입력 없이 가만히 있습니다. */
+/** 시작 위치입니다. dummy가 있으면 그 공은 입력 없이 가만히 있습니다. skills는 AI마다의 수준이며, 없으면 모두 보통입니다. */
 interface Setup {
   bots: readonly (readonly [number, number])[];
+  skills?: readonly Difficulty[];
   dummy?: readonly [number, number];
   limit: number;
 }
@@ -57,7 +75,7 @@ function play(mode: Mode, map: GameMap, setup: Setup, random: () => number): Gam
   const bots = new Map<string, Bot>();
   setup.bots.forEach(([x, y], i) => {
     world.addBall(`bot${i + 1}`, x, y, true);
-    bots.set(`bot${i + 1}`, new Bot(random));
+    bots.set(`bot${i + 1}`, new Bot(random, SKILLS[setup.skills?.[i] ?? 'normal']));
   });
   if (setup.dummy) world.addBall('dummy', setup.dummy[0], setup.dummy[1], true);
   const touched = new Map<string, number>();
@@ -162,7 +180,7 @@ function report(games: Game[]): string {
   return `\n${lines.join('\n')}\n`;
 }
 
-describe.each(SEED_SETS)('AI끼리 하는 모의 경기 480판($name)', ({ seeds }) => {
+describe.each(SEED_SETS)('AI끼리 하는 모의 경기 480판($name)', ({ seeds, skill }) => {
   let games: Game[] = [];
   let table = '';
 
@@ -174,12 +192,14 @@ describe.each(SEED_SETS)('AI끼리 하는 모의 경기 480판($name)', ({ seeds
           for (const seed of seeds) {
             const random = seeded(seed * 1000 + m * 100 + i * 10 + count);
             const bots = pickSpawns(map, count, random);
-            games.push(play(mode, map, { bots, limit: LIMIT }, random));
+            const skills = bots.map(() => skill);
+            games.push(play(mode, map, { bots, skills, limit: LIMIT }, random));
           }
         }
       });
     });
     table = report(games);
+    if (seeds === SEEDS) mirrors.set(skill, games);
     if (import.meta.env.VITE_BOT_SIM_REPORT) console.log(table);
   }, 20000);
 
@@ -215,6 +235,86 @@ describe.each(SEED_SETS)('AI끼리 하는 모의 경기 480판($name)', ({ seeds
     const outs = games.flatMap((g) => g.outs);
     expect(outs.length, table).toBeGreaterThan(0);
     expect(ratio(outs.filter((o) => o.self).length, outs.length), table).toBeLessThanOrEqual(0.35);
+  });
+});
+
+/** 경기 1분마다 혼자 떨어진 횟수입니다. 판이 길어질수록 자멸의 비율은 저절로 커지므로, 수준끼리는 시간으로 나누어 견줍니다. */
+function selfPerMinute(games: Game[]): number {
+  const selfs = games.flatMap((g) => g.outs).filter((o) => o.self).length;
+  return (selfs * 60) / games.reduce((sum, g) => sum + g.seconds, 0);
+}
+
+describe('수준에 따른 자멸', () => {
+  it.each([
+    { name: '쉬움', skill: 'easy' },
+    { name: '어려움', skill: 'hard' },
+  ] as const)('$name: 경기 1분마다 혼자 떨어지는 횟수가 보통보다 많지 않다', ({ skill }) => {
+    const rates = DIFFICULTIES.map((d) => `${d.name} ${selfPerMinute(mirrors.get(d.id) ?? []).toFixed(2)}번`).join(', ');
+    if (import.meta.env.VITE_BOT_SIM_REPORT) console.log(`경기 1분당 자멸: ${rates}`);
+    expect(selfPerMinute(mirrors.get(skill)!), rates).toBeLessThanOrEqual(selfPerMinute(mirrors.get('normal')!));
+  });
+});
+
+describe.each(DUELS)('수준이 다른 AI의 1대1 288판($name)', ({ name, strong, weak }) => {
+  let games: Game[] = [];
+  /** 판마다 높은 수준인 AI의 id입니다. */
+  let strongIds: string[] = [];
+  let table = '';
+
+  const wins = (mode?: Mode) =>
+    games.filter((g, i) => (!mode || g.mode === mode) && !g.timeout && g.survivors[0] === strongIds[i]).length;
+  const losses = (mode?: Mode) =>
+    games.filter((g, i) => (!mode || g.mode === mode) && !g.timeout && g.survivors.length === 1 && g.survivors[0] !== strongIds[i])
+      .length;
+
+  beforeAll(() => {
+    games = [];
+    strongIds = [];
+    MODES.forEach(({ id: mode }, m) => {
+      MAPS.forEach((map, i) => {
+        for (const seed of DUEL_SEEDS) {
+          const random = seeded(seed * 1000 + m * 100 + i * 10 + 7);
+          const bots = pickSpawns(map, 2, random);
+          // 먼저 생각하는 쪽이 유리하지 않도록 시드마다 순서를 바꿉니다.
+          const first = seed % 2 === 1;
+          games.push(play(mode, map, { bots, skills: first ? [strong, weak] : [weak, strong], limit: LIMIT }, random));
+          strongIds.push(first ? 'bot1' : 'bot2');
+        }
+      });
+    });
+    const lines = [name, line('전체', games)];
+    for (const mode of [undefined, ...MODES.map((m) => m.id)]) {
+      const total = games.filter((g) => !mode || g.mode === mode).length;
+      const decided = wins(mode) + losses(mode);
+      lines.push(
+        `${(mode ?? '전체').padEnd(8)} ${SKILL_NAMES[strong]} 승 ${wins(mode)}  ${SKILL_NAMES[weak]} 승 ${losses(mode)}  승부 없음 ${total - decided}  승률 ${percent(wins(mode), decided)}`,
+      );
+    }
+    for (const [who, name] of [
+      [strong, SKILL_NAMES[strong]],
+      [weak, SKILL_NAMES[weak]],
+    ] as const) {
+      const outs = games.flatMap((g, i) => g.outs.filter((o) => (o.id === strongIds[i]) === (who === strong)));
+      lines.push(`${name}의 탈락 ${outs.length}번 가운데 자멸 ${outs.filter((o) => o.self).length}번`);
+    }
+    table = `\n${lines.join('\n')}\n`;
+    if (import.meta.env.VITE_BOT_SIM_REPORT) console.log(table);
+  }, 20000);
+
+  it('모드 3개 × 맵 16개 × 시드 6개를 모두 돌린다', () => {
+    expect(games).toHaveLength(288);
+  });
+
+  it('승부가 난 판 가운데 높은 수준이 60% 이상 이긴다', () => {
+    expect(ratio(wins(), wins() + losses()), table).toBeGreaterThanOrEqual(0.6);
+  });
+
+  it.each(MODES.map((m) => m.id))('%s: 높은 수준이 낮은 수준보다 많이 이긴다', (mode) => {
+    expect(wins(mode), table).toBeGreaterThan(losses(mode));
+  });
+
+  it('시간 초과로 끝나는 판이 전체의 15% 이하이다', () => {
+    expect(ratio(games.filter((g) => g.timeout).length, games.length), table).toBeLessThanOrEqual(0.15);
   });
 });
 
