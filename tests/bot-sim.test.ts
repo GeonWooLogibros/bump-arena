@@ -180,24 +180,30 @@ function report(games: Game[]): string {
   return `\n${lines.join('\n')}\n`;
 }
 
+/** 같은 수준끼리 모드 3개 × 맵 16개 × AI 수 2개 × 시드 묶음으로 480판을 돌립니다. */
+function mirror(seeds: readonly number[], skill: Difficulty): Game[] {
+  const games: Game[] = [];
+  MODES.forEach(({ id: mode }, m) => {
+    MAPS.forEach((map, i) => {
+      for (const count of COUNTS) {
+        for (const seed of seeds) {
+          const random = seeded(seed * 1000 + m * 100 + i * 10 + count);
+          const bots = pickSpawns(map, count, random);
+          const skills = bots.map(() => skill);
+          games.push(play(mode, map, { bots, skills, limit: LIMIT }, random));
+        }
+      }
+    });
+  });
+  return games;
+}
+
 describe.each(SEED_SETS)('AI끼리 하는 모의 경기 480판($name)', ({ seeds, skill }) => {
   let games: Game[] = [];
   let table = '';
 
   beforeAll(() => {
-    games = [];
-    MODES.forEach(({ id: mode }, m) => {
-      MAPS.forEach((map, i) => {
-        for (const count of COUNTS) {
-          for (const seed of seeds) {
-            const random = seeded(seed * 1000 + m * 100 + i * 10 + count);
-            const bots = pickSpawns(map, count, random);
-            const skills = bots.map(() => skill);
-            games.push(play(mode, map, { bots, skills, limit: LIMIT }, random));
-          }
-        }
-      });
-    });
+    games = mirror(seeds, skill);
     table = report(games);
     if (seeds === SEEDS) mirrors.set(skill, games);
     if (import.meta.env.VITE_BOT_SIM_REPORT) console.log(table);
@@ -245,6 +251,13 @@ function selfPerMinute(games: Game[]): number {
 }
 
 describe('수준에 따른 자멸', () => {
+  // 이 묶음만 따로 돌릴 때에는 위의 모의 경기가 돌지 않으므로, 아직 없는 수준의 판을 여기서 돌립니다.
+  beforeAll(() => {
+    for (const { id } of DIFFICULTIES) {
+      if (!mirrors.has(id)) mirrors.set(id, mirror(SEEDS, id));
+    }
+  }, 60000);
+
   it.each([
     { name: '쉬움', skill: 'easy' },
     { name: '어려움', skill: 'hard' },
