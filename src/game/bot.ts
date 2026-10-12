@@ -122,6 +122,8 @@ const FIRST_SHOT_MAX = 4;
 /** 쏜 뒤 다시 모으기까지 더 쉬는 시간(초)의 범위입니다. TUNING.arrowCooldown에 더합니다. */
 const ARROW_REST_MIN = 0.2;
 const ARROW_REST_MAX = 1;
+/** 움직이는 발판을 기다릴 때 자리 끝에서 이만큼(m) 안쪽에 섭니다. */
+const WAIT_INSET = 1.2;
 /** 쏠 기회가 이 시간(초) 동안 없으면 상대 쪽으로 건너갑니다. */
 const ARROW_PATIENCE = 3;
 /** 화살 모드에서 상대와 두려는 거리(m)의 범위입니다. */
@@ -413,6 +415,11 @@ export class Bot {
     const ledge = terrain.ledges[here];
     const hop = terrain.next[here][there];
     const way = hop < 0 ? null : crossing(ledge, terrain.ledges[hop]);
+    if (!way && hop >= 0) {
+      // 움직이는 발판이 아직 멀리 있으면, 그쪽 끝에서 조금 물러나 발판이 다가오기를 기다립니다.
+      const side = terrain.ledges[hop].x0 >= ledge.x1 ? ledge.x1 - WAIT_INSET : ledge.x0 + WAIT_INSET;
+      return guard(steer(me, Math.max(ledge.x0, Math.min(ledge.x1, side)), RUN_SPEED), me, ledge);
+    }
     // 건널 수 없으면 상대와 가까운 쪽 끝에서 기다립니다.
     if (!way) return guard(steer(me, target.x, RUN_SPEED), me, ledge);
     // 마주 보고 동시에 뛰어 틈 위에서 부딪치지 않도록, 건너기로 마음먹은 뒤 잠깐씩 다르게 뜸을 들입니다.

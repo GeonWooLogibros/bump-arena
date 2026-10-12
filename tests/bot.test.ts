@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { Bot } from '../src/game/bot';
 import type { BotSense } from '../src/game/bot';
-import { MAPS } from '../src/game/maps';
+import { MAPS, mapAt } from '../src/game/maps';
 import { NO_INPUT } from '../src/physics/world';
 import type { Input } from '../src/physics/world';
 
@@ -243,5 +243,29 @@ describe('화살', () => {
     const inputs = watch(new Bot(() => 0.5), arrows({ me: at(8), others: [foe(18)] }), 4);
     expect(inputs.some((input) => input.special)).toBe(false);
     expect(inputs.some((input) => input.left || input.right)).toBe(true);
+  });
+});
+
+describe('움직이는 발판 기다리기', () => {
+  // 승강기 맵의 아래층은 x가 2.5에서 11.5까지이고 윗면의 y는 14입니다. 상대는 위층에 있습니다.
+  const lift = map('lift');
+  const above = [foe(25, 8.5)];
+
+  it('승강기가 위에 있는 동안에는 아래층 끝에서 조금 물러나 기다립니다', () => {
+    const up = mapAt(lift, 4);
+    const bot = new Bot(() => 0);
+    for (const input of watch(bot, sense({ map: up, me: at(10.3, 13.5), others: above }), 3)) {
+      expect(input.up).toBe(false);
+      expect(input.right).toBe(false);
+    }
+    // 끝에서 멀리 있으면 기다릴 곳까지 다가갑니다.
+    expect(new Bot(() => 0).think(sense({ map: up, me: at(5, 13.5), others: above }), TICK).right).toBe(true);
+  });
+
+  it('승강기가 내려오면 올라탑니다', () => {
+    const down = mapAt(lift, 0);
+    const bot = new Bot(() => 0);
+    const inputs = watch(bot, sense({ map: down, me: at(10.5, 13.5, 6), others: above }), 0.3);
+    expect(inputs.some((input) => input.up && input.right)).toBe(true);
   });
 });

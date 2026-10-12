@@ -77,7 +77,7 @@ function play(mode: Mode, map: GameMap, setup: Setup, random: () => number): Gam
       const me = world.state(id);
       if (!me) continue;
       const sense: BotSense = {
-        map,
+        map: world.footing(),
         mode,
         me,
         others: views.filter((b) => b.id !== id),
@@ -162,7 +162,7 @@ function report(games: Game[]): string {
   return `\n${lines.join('\n')}\n`;
 }
 
-describe.each(SEED_SETS)('AI끼리 하는 모의 경기 180판($name)', ({ seeds }) => {
+describe.each(SEED_SETS)('AI끼리 하는 모의 경기 480판($name)', ({ seeds }) => {
   let games: Game[] = [];
   let table = '';
 
@@ -183,8 +183,8 @@ describe.each(SEED_SETS)('AI끼리 하는 모의 경기 180판($name)', ({ seeds
     if (import.meta.env.VITE_BOT_SIM_REPORT) console.log(table);
   }, 20000);
 
-  it('모드 3개 × 맵 6개 × AI 수 2개 × 시드 5개를 모두 돌린다', () => {
-    expect(games).toHaveLength(180);
+  it('모드 3개 × 맵 16개 × AI 수 2개 × 시드 5개를 모두 돌린다', () => {
+    expect(games).toHaveLength(480);
   });
 
   it('시간 초과로 끝나는 판이 전체의 15% 이하이다', () => {

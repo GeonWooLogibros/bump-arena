@@ -1,3 +1,4 @@
+import { mapAt } from './maps';
 import type { GameMap } from './maps';
 import { TUNING } from './modes';
 import { surfaceBelow } from '../physics/geometry';
@@ -28,6 +29,9 @@ export interface Ledge {
   x1: number;
   ys: number[];
 }
+
+/** 움직이는 발판이 있는 맵에서 길을 찾을 때, 이 간격(초)으로 발판을 옮겨 가며 건널 수 있는지 봅니다. */
+const ROUTE_STEP = 0.25;
 
 /** 한 자리에서 다른 자리로 뛰어 건너는 방법입니다. */
 export interface Crossing {
@@ -79,8 +83,8 @@ export function crossing(a: Ledge, b: Ledge): Crossing | null {
   return leapSpeed(way, 0) > LEAP_SPEED_MAX ? null : way;
 }
 
-/** 맵의 도형에서 설 수 있는 자리와 자리 사이의 길을 찾습니다. */
-function survey(map: GameMap): Terrain {
+/** 맵의 도형에서 설 수 있는 자리를 찾습니다. */
+function ledgesOf(map: GameMap): Ledge[] {
   const count = Math.round(TUNING.viewW / GRID) + 1;
   // 도형마다 세로선과 만나는 윗면·아랫면을 잽니다.
   const spans = map.shapes.map((shape) => {
@@ -91,12 +95,12 @@ function survey(map: GameMap): Terrain {
     });
   });
   const open: { last: number; ledge: Ledge }[] = [];
-  const ledges: Ledge[] = [];
+  const found: { shape: number; ledge: Ledge }[] = [];
   for (let i = 0; i < count; i++) {
-    for (const span of spans) {
+    spans.forEach((span, shape) => {
       const top = span[i]?.[0];
       // 다른 도형 속에 묻힌 윗면은 설 수 없습니다.
-      if (top === undefined || spans.some((o) => o[i] && o[i]![0] < top - 1e-6 && top < o[i]![1] - 1e-6)) continue;
+      if (top === undefined || spans.some((o) => o[i] && o[i]![0] < top - 1e-6 && top < o[i]![1] - 1e-6)) return;
       const chain = open.find((c) => c.last === i - 1 && Math.abs(c.ledge.ys[c.ledge.ys.length - 1] - top) <= MAX_STEP);
       if (chain) {
         chain.last = i;
@@ -105,26 +109,64 @@ function survey(map: GameMap): Terrain {
       } else {
         const ledge = { x0: i * GRID, x1: i * GRID, ys: [top] };
         open.push({ last: i, ledge });
-        ledges.push(ledge);
+        found.push({ shape, ledge });
       }
-    }
+    });
   }
-  const wide = ledges.filter((l) => l.x1 - l.x0 >= MIN_LEDGE);
-  const next = wide.map((_, from) => {
-    const first = wide.map(() => -1);
+  // 발판이 움직여도 자리의 번호가 바뀌지 않도록, 움직이는 발판이 있는 맵은 도형 순서대로 늘어놓습니다.
+  if (map.base) found.sort((a, b) => a.shape - b.shape);
+  return found.map((f) => f.ledge).filter((l) => l.x1 - l.x0 >= MIN_LEDGE);
+}
+
+/** can[a][b]가 참이면 a에서 b로 바로 건널 수 있을 때, 자리에서 자리로 갈 때 먼저 건너갈 자리(없으면 -1)를 찾습니다. */
+function route(can: boolean[][]): number[][] {
+  return can.map((_, from) => {
+    const first = can.map(() => -1);
     first[from] = from;
     const queue = [from];
     for (let head = 0; head < queue.length; head++) {
       const at = queue[head];
-      wide.forEach((ledge, to) => {
-        if (first[to] >= 0 || !crossing(wide[at], ledge)) return;
+      can.forEach((_, to) => {
+        if (first[to] >= 0 || !can[at][to]) return;
         first[to] = at === from ? to : first[at];
         queue.push(to);
       });
     }
     return first;
   });
-  return { ledges: wide, next };
+}
+
+function crossable(ledges: Ledge[]): boolean[][] {
+  return ledges.map((a) => ledges.map((b) => crossing(a, b) !== null));
+}
+
+const routes = new WeakMap<GameMap, number[][]>();
+
+/**
+ * 움직이는 발판이 있는 맵의 길입니다. 발판이 오가는 동안 한 번이라도 건널 수 있으면 길로 봅니다.
+ * 지금은 건널 수 없어도 길이 있으면 AI가 그쪽 끝에서 기다리다가 건널 수 있을 때 건넙니다.
+ */
+function routesOf(base: GameMap): number[][] {
+  let next = routes.get(base);
+  if (next) return next;
+  const first = ledgesOf(mapAt(base, 0));
+  const can = crossable(first);
+  const periods = base.shapes.map((s) => (s.kind === 'box' && s.move ? s.move.period : 0));
+  for (let t = ROUTE_STEP; t < Math.max(...periods) * 2; t += ROUTE_STEP) {
+    const ledges = ledgesOf(mapAt(base, t));
+    if (ledges.length !== first.length) continue;
+    crossable(ledges).forEach((row, a) => row.forEach((ok, b) => (can[a][b] ||= ok)));
+  }
+  next = route(can);
+  routes.set(base, next);
+  return next;
+}
+
+/** 맵의 도형에서 설 수 있는 자리와 자리 사이의 길을 찾습니다. */
+function survey(map: GameMap): Terrain {
+  const ledges = ledgesOf(map);
+  const planned = map.base ? routesOf(map.base) : null;
+  return { ledges, next: planned?.length === ledges.length ? planned : route(crossable(ledges)) };
 }
 
 export function terrainOf(map: GameMap): Terrain {
