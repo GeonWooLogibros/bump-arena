@@ -114,8 +114,16 @@ describe('방장 상태 왕복', () => {
       game: -5, round: 1e9, ms: 1e9, map: 77, winner: 5,
     };
     const decoded = decodeHost(wire);
-    expect(decoded?.settings).toEqual({ mode: 'classic', target: 5, mapSetting: 5, bots: 0 });
-    expect(decoded).toMatchObject({ game: 0, round: 1_000_000, ms: 600_000, map: 5, winner: null });
+    expect(decoded?.settings).toEqual({ mode: 'classic', target: 5, mapSetting: 15, bots: 0 });
+    expect(decoded).toMatchObject({ game: 0, round: 1_000_000, ms: 600_000, map: 15, winner: null });
+  });
+
+  it('맵 번호는 16개 맵을 모두 그대로 읽습니다', () => {
+    for (let map = 0; map < 16; map++) {
+      const wire = { ...(json(encodeHost(host())) as object), map, settings: { ...host().settings, mapSetting: map } };
+      expect(decodeHost(wire)?.map).toBe(map);
+      expect(decodeHost(wire)?.settings.mapSetting).toBe(map);
+    }
   });
 
   it('AI 공은 5개까지 남기고 잘못된 공은 버립니다', () => {

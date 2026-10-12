@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { MAPS, spawnSlot } from '../src/game/maps';
+import { MAPS, moveOffset, spawnSlot } from '../src/game/maps';
 import type { Settings } from '../src/game/round';
 import { encodeBall, encodeHost, readPeer, roundKey } from '../src/net/wire';
 import type { PeerState } from '../src/net/wire';
@@ -741,5 +741,102 @@ describe('방에서 잠깐 보이지 않는 참가자', () => {
     made.run(3000);
     expect(a.match).toMatchObject({ round: 2, phase: 'play' });
     for (const id of ['a', 'b', 'c']) expect(ball(made.get(id), 'b').alive).toBe(true);
+  });
+});
+
+describe('움직이는 발판의 시간', () => {
+  const FERRY = MAPS.findIndex((m) => m.id === 'ferry');
+  const boat = MAPS[FERRY].shapes[2];
+  if (boat.kind !== 'box' || !boat.move) throw new Error('나룻배 맵의 셋째 도형이 움직이는 발판이 아닙니다.');
+  const move = boat.move;
+  const rest = boat.x;
+
+  /** 세션이 그리는 배의 x입니다. */
+  function boatX(session: Session): number {
+    const shape = session.view().shapes[2];
+    if (shape.kind !== 'box') throw new Error('상자가 아닙니다.');
+    return shape.x;
+  }
+
+  /** play 단계가 시작된 뒤 ms가 지났을 때 배가 있어야 할 x입니다. */
+  function expected(ms: number): number {
+    return rest + moveOffset(move, ms / 1000)[0];
+  }
+
+  it('카운트다운 동안에는 제자리에 멈춰 있다', () => {
+    const made = room(['a', 'b'], { mapSetting: FERRY });
+    made.run(2900);
+    expect(made.get('a').match.phase).toBe('countdown');
+    expect(boatX(made.get('a'))).toBe(rest);
+    expect(boatX(made.get('b'))).toBe(rest);
+  });
+
+  it('방장의 발판은 play 단계의 경과 시간으로 정해진 곳에 있다', () => {
+    const made = room(['a', 'b'], { mapSetting: FERRY });
+    const a = made.get('a');
+    made.runUntil(() => a.match.phase === 'play');
+    for (let i = 0; i < 40; i++) {
+      made.run(500);
+      // 아직 계산하지 않고 남겨 둔 시간(한 step 미만)만큼만 어긋납니다.
+      expect(Math.abs(boatX(a) - expected(a.match.ms))).toBeLessThan(0.05);
+    }
+  });
+
+  it('참가자의 발판은 방장의 발판을 따라가고 시간이 지나도 벌어지지 않는다', () => {
+    const made = room(['a', 'b'], { mapSetting: FERRY });
+    const a = made.get('a');
+    const b = made.get('b');
+    made.runUntil(() => a.match.phase === 'play');
+    made.run(1000);
+    let worst = 0;
+    for (let i = 0; i < 1200; i++) {
+      made.run(FRAME_MS);
+      worst = Math.max(worst, Math.abs(boatX(b) - boatX(a)));
+    }
+    // 통신 지연 어림값(NET_LEAD) 동안 발판이 움직이는 거리보다 조금 넉넉한 값입니다.
+    expect(worst).toBeLessThan(0.3);
+    expect(boatX(b)).not.toBeCloseTo(rest, 0);
+  });
+
+  it('경기 도중에 들어온 사람의 발판도 바로 같은 곳에 놓인다', () => {
+    const made = room(['a', 'b'], { mapSetting: FERRY });
+    const a = made.get('a');
+    made.runUntil(() => a.match.phase === 'play');
+    made.run(3000);
+    made.join('c');
+    made.run(200);
+    expect(Math.abs(boatX(made.get('c')) - boatX(a))).toBeLessThan(0.3);
+    expect(Math.abs(boatX(a) - rest)).toBeGreaterThan(1);
+  });
+
+  it('방장이 바뀌어도 발판이 튀지 않는다', () => {
+    const made = room(['a', 'b'], { mapSetting: FERRY });
+    const a = made.get('a');
+    const b = made.get('b');
+    made.runUntil(() => a.match.phase === 'play');
+    made.run(2000);
+    made.setHost('b');
+    let last = boatX(b);
+    for (let i = 0; i < 120; i++) {
+      made.run(FRAME_MS);
+      expect(Math.abs(boatX(b) - last)).toBeLessThan(0.3);
+      last = boatX(b);
+    }
+    expect(Math.abs(boatX(b) - expected(b.match.ms))).toBeLessThan(0.05);
+  });
+
+  it('라운드가 끝나면 발판이 멈춘다', () => {
+    const session = new Session('me', () => 0);
+    session.setSettings({ bots: 1, mapSetting: FERRY });
+    session.start(['me']);
+    tickUntil(session, () => session.match.phase === 'play', NO_INPUT);
+    tick(session, 2000);
+    // 왼쪽 끝으로 달려 나가 떨어집니다.
+    tickUntil(session, () => session.match.phase === 'roundEnd', press('left'));
+    tick(session, 100);
+    const stopped = boatX(session);
+    tick(session, 1000);
+    expect(session.match.phase).toBe('roundEnd');
+    expect(boatX(session)).toBe(stopped);
   });
 });

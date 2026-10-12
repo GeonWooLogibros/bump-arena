@@ -1,5 +1,6 @@
 /** 방에 올리는 값(presence)의 형식. 보내기 전에 줄이고, 받을 때는 믿지 않고 하나씩 검사합니다. */
 import { cleanName, COLORS } from '../game/lobby';
+import { MAPS, RANDOM_MAP } from '../game/maps';
 import { DEFAULT_SETTINGS } from '../game/round';
 import type { Match, Phase } from '../game/round';
 import { TARGETS, readMode } from '../game/modes';
@@ -183,14 +184,14 @@ export function decodeHost(value: unknown): HostWire | null {
     settings: {
       mode: readMode(s.mode),
       target,
-      mapSetting: ranged(s.mapSetting, -1, 5, DEFAULT_SETTINGS.mapSetting),
+      mapSetting: ranged(s.mapSetting, RANDOM_MAP, MAPS.length - 1, DEFAULT_SETTINGS.mapSetting),
       bots: ranged(s.bots, 0, 5, DEFAULT_SETTINGS.bots),
     },
     game: whole(value.game, MAX_ROUND),
     phase,
     ms: whole(value.ms, MAX_MS),
     round: whole(value.round, MAX_ROUND),
-    map: ranged(value.map, 0, 5, 0),
+    map: ranged(value.map, 0, MAPS.length - 1, 0),
     scores,
     roster: Array.isArray(value.roster) ? value.roster.filter(validId).slice(0, ROSTER_LIMIT) : [],
     winner: validId(value.winner) ? value.winner : null,

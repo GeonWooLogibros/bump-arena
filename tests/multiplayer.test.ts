@@ -200,7 +200,7 @@ describe('연습하기', () => {
   it('잘못된 설정 값은 무시하고 AI 수는 정수로 바꾼다', () => {
     const c = practice();
     c.mp.setSettings({ mode: 'grapple', target: 7, mapSetting: 2, bots: 3 });
-    const wrong = { mode: 'laser', target: 4, mapSetting: 9, bots: NaN } as unknown as Partial<Settings>;
+    const wrong = { mode: 'laser', target: 4, mapSetting: 16, bots: NaN } as unknown as Partial<Settings>;
     c.mp.setSettings(wrong);
     c.mp.setSettings({ mapSetting: 1.5, bots: Infinity });
     expect(c.mp.lobbyView()?.settings).toEqual({ mode: 'grapple', target: 7, mapSetting: 2, bots: 3 });

@@ -1,7 +1,7 @@
 /** 경기 화면 그리기. 받은 상태를 그대로 그리기만 하고 아무것도 바꾸지 않습니다. */
 import { COLORS } from '../game/lobby';
 import { MAPS } from '../game/maps';
-import type { GameMap, Shape } from '../game/maps';
+import type { Shape } from '../game/maps';
 import { MODES, TUNING } from '../game/modes';
 import type { PlayerInfo } from '../multiplayer';
 import { corners } from '../physics/geometry';
@@ -38,6 +38,9 @@ const BACKGROUND = '#1e2433';
 const OUTSIDE = '#131722';
 const PLATFORM = '#55627a';
 const PLATFORM_TOP = '#7f8ea8';
+/** 튕기는 발판의 색입니다. */
+const BOUNCY = '#2b8a6e';
+const BOUNCY_TOP = '#63e6be';
 const ROPE = '#e8edf7';
 const ARROW = '#f1f3f8';
 const CHARGE = '#ffd43b';
@@ -93,8 +96,8 @@ export function scoreRows(view: SessionView, players: readonly PlayerInfo[]): Sc
 }
 
 function drawShape(ctx: CanvasRenderingContext2D, shape: Shape, line: number): void {
-  ctx.fillStyle = PLATFORM;
-  ctx.strokeStyle = PLATFORM_TOP;
+  ctx.fillStyle = shape.bouncy ? BOUNCY : PLATFORM;
+  ctx.strokeStyle = shape.bouncy ? BOUNCY_TOP : PLATFORM_TOP;
   ctx.lineWidth = line;
   ctx.lineCap = 'round';
   if (shape.kind === 'circle') {
@@ -134,8 +137,8 @@ function drawShape(ctx: CanvasRenderingContext2D, shape: Shape, line: number): v
   ctx.stroke();
 }
 
-function drawMap(ctx: CanvasRenderingContext2D, map: GameMap, px: number): void {
-  for (const shape of map.shapes) drawShape(ctx, shape, 4 * px);
+function drawShapes(ctx: CanvasRenderingContext2D, shapes: readonly Shape[], px: number): void {
+  for (const shape of shapes) drawShape(ctx, shape, 4 * px);
 }
 
 function drawRope(ctx: CanvasRenderingContext2D, ball: BallView, px: number): void {
@@ -256,7 +259,7 @@ function drawEffects(ctx: CanvasRenderingContext2D, effects: Effects, px: number
 function drawBackdrop(ctx: CanvasRenderingContext2D, time: number, px: number): void {
   const map = MAPS[0];
   ctx.globalAlpha = 0.55;
-  drawMap(ctx, map, px);
+  drawShapes(ctx, map.shapes, px);
   map.spawns.forEach(([x], i) => {
     const hop = Math.abs(Math.sin(time / 420 + i * 1.3));
     const ball: BallView = {
@@ -433,7 +436,7 @@ export function drawScene(
     return;
   }
   const alive = view.balls.filter((ball) => ball.alive);
-  drawMap(ctx, map, px);
+  drawShapes(ctx, view.shapes, px);
   for (const ball of alive) drawRope(ctx, ball, px);
   for (const arrow of view.arrows) drawArrow(ctx, arrow, ballColors(s.players, arrow.owner).fill, px);
   for (const ball of alive) drawBall(ctx, ball, ballColors(s.players, ball.id), px);

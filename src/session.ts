@@ -2,7 +2,7 @@
 import { Bot } from './game/bot';
 import { MAX_PLAYERS } from './game/lobby';
 import { MAPS, spawnSlot } from './game/maps';
-import type { GameMap } from './game/maps';
+import type { GameMap, Shape } from './game/maps';
 import { TUNING } from './game/modes';
 import { DEFAULT_SETTINGS, advance, botIds, isBot, lobbyMatch, startMatch, toLobby } from './game/round';
 import type { Match, Settings } from './game/round';
@@ -18,6 +18,11 @@ export const MAX_FRAME_MS = 500;
 /** 참가자가 방에서 보이지 않아도 이만큼은 나간 것으로 보지 않습니다(밀리초). 방을 중계하는 사람이 바뀌는 동안에는 목록이 잠깐 빕니다. */
 export const ABSENT_GRACE_MS = 3000;
 
+/** 방장이 아닐 때, 받은 경기 시간과 내 시계가 이보다 크게 어긋나면 바로 맞춥니다(밀리초). */
+export const CLOCK_SNAP_MS = 250;
+/** 방장이 아닐 때, 경기 시간을 받을 때마다 어긋난 만큼의 이 비율을 내 시계에 반영합니다. */
+const CLOCK_PULL = 0.2;
+
 /** 한 프레임에 진행하는 step의 최대 수입니다. */
 const MAX_STEPS = 10;
 
@@ -31,10 +36,11 @@ export interface Frame {
   peers: readonly PeerState[];
 }
 
-/** 화면에 그릴 한 순간의 모습입니다. map은 대기실이면 null입니다. */
+/** 화면에 그릴 한 순간의 모습입니다. map은 대기실이면 null입니다. shapes는 발판들이 지금 있는 위치의 도형입니다. */
 export interface SessionView {
   match: Match;
   map: GameMap | null;
+  shapes: readonly Shape[];
   balls: BallView[];
   arrows: ArrowView[];
   /** 내가 이번 라운드에 참가하지 않고 구경 중인지 여부. */
@@ -51,6 +57,15 @@ export class Session {
   private key = 0;
   private hosting = false;
   private acc = 0;
+  /**
+   * play 단계가 시작된 뒤 지난 시간(밀리초)입니다. 움직이는 발판의 위치를 정합니다.
+   * 방장은 경기 상태의 ms를 그대로 쓰고, 나머지는 방장이 올린 ms를 따라가도록 맞춥니다.
+   */
+  private clock = 0;
+  /** 시계를 맞추는 데 마지막으로 쓴 방장의 ms입니다. */
+  private clockSeen = -1;
+  /** 세계에 마지막으로 알려 준 play 단계의 경과 시간(초)입니다. */
+  private worldTime = 0;
   private input: Readonly<Input> = NO_INPUT;
   private readonly bots = new Map<string, Bot>();
   private readonly botInputs = new Map<string, Input>();
@@ -115,6 +130,7 @@ export class Session {
     this.syncWorld();
     const world = this.world;
     if (!world) return [];
+    this.syncClock(dt);
 
     const events: WorldEvent[] = [];
     this.applyRemote(world, frame, dt, events);
@@ -130,7 +146,9 @@ export class Session {
     for (let steps = 0; steps < MAX_STEPS && this.acc >= TUNING.step; steps++) {
       this.acc -= TUNING.step;
       if (phase === 'play') this.think(world);
-      events.push(...world.step());
+      // 아직 계산하지 않고 남겨 둔 시간만큼은 시계에서 뺍니다. play가 아니면 시간을 그대로 두어 발판을 멈춥니다.
+      if (phase === 'play') this.worldTime = Math.max(0, this.clock / 1000 - this.acc);
+      events.push(...world.step(this.worldTime));
     }
     if (this.acc >= TUNING.step) this.acc = 0;
     return events;
@@ -159,6 +177,7 @@ export class Session {
     return {
       match: this.current,
       map: this.map,
+      shapes: this.world?.shapes() ?? [],
       balls: this.world?.balls() ?? [],
       arrows: this.world?.arrows() ?? [],
       watching: phase !== 'lobby' && !roster.includes(this.me),
@@ -194,6 +213,9 @@ export class Session {
     if (phase !== 'lobby' && this.world && key === this.key) return;
     this.key = key;
     this.acc = 0;
+    this.clock = 0;
+    this.clockSeen = -1;
+    this.worldTime = 0;
     this.input = NO_INPUT;
     this.seen.clear();
     this.gone.clear();
@@ -214,6 +236,29 @@ export class Session {
     this.world = world;
     this.map = map;
     this.assignBots();
+  }
+
+  /**
+   * play 단계의 경과 시간을 정합니다. 방장은 자기가 진행하는 ms가 곧 그 시간입니다.
+   * 나머지는 프레임마다 스스로 흐르게 두고, 방장의 ms를 새로 받을 때마다 통신 지연(NET_LEAD)을 더한 값 쪽으로 당깁니다.
+   * 발판의 위치는 이 시간만으로 정해지므로, 시간이 맞으면 어느 브라우저에서나 발판이 같은 곳에 있습니다.
+   */
+  private syncClock(dt: number): void {
+    const { phase, ms } = this.current;
+    if (phase !== 'play') {
+      if (phase === 'countdown') this.clock = 0;
+      return;
+    }
+    if (this.hosting) {
+      this.clock = ms;
+    } else {
+      this.clock += dt;
+      if (ms !== this.clockSeen) {
+        const off = ms + NET_LEAD * 1000 - this.clock;
+        this.clock += Math.abs(off) > CLOCK_SNAP_MS ? off : off * CLOCK_PULL;
+      }
+    }
+    this.clockSeen = ms;
   }
 
   /** 방장이면 AI 공을 내가 정하는 공으로 바꾸고 AI를 만듭니다. 아니면 받은 상태를 따르게 합니다. */
@@ -300,8 +345,8 @@ export class Session {
 
   /** 생존한 AI마다 이번 step의 입력을 정합니다. */
   private think(world: World): void {
-    const map = this.map;
-    if (!map) return;
+    if (!this.map) return;
+    const map = world.footing();
     for (const [id, bot] of this.bots) {
       const me = world.state(id);
       if (!me) continue;
