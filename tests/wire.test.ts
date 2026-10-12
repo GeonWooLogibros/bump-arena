@@ -25,6 +25,7 @@ const host = (): HostWire => ({
   roster: ['a', 'bot1'],
   winner: null,
   bs: { bot1: ball() },
+  t: 1200,
 });
 
 describe('roundKey', () => {
@@ -111,11 +112,14 @@ describe('방장 상태 왕복', () => {
     const wire = {
       ...(json(encodeHost(host())) as object),
       settings: { mode: '?', target: 4, mapSetting: 99, bots: -3, difficulty: 'expert' },
-      game: -5, round: 1e9, ms: 1e9, map: 77, winner: 5,
+      game: -5, round: 1e9, ms: 1e9, map: 77, winner: 5, t: 1e9,
     };
     const decoded = decodeHost(wire);
     expect(decoded?.settings).toEqual({ mode: 'classic', target: 5, mapSetting: 15, bots: 0, difficulty: 'normal' });
-    expect(decoded).toMatchObject({ game: 0, round: 1_000_000, ms: 600_000, map: 15, winner: null });
+    expect(decoded).toMatchObject({ game: 0, round: 1_000_000, ms: 600_000, map: 15, winner: null, t: 600_000 });
+    // 발판 시간을 올리지 않는 예전 형식은 0으로 읽습니다.
+    const { t, ...old } = json(encodeHost(host())) as Record<string, unknown>;
+    expect(decodeHost(old)?.t).toBe(0);
   });
 
   it('AI 수준은 세 가지를 그대로 읽고, 없거나 모르는 값이면 보통으로 읽습니다', () => {

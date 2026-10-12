@@ -27,6 +27,11 @@ const CLOCK_PULL = 0.2;
 /** 한 프레임에 진행하는 step의 최대 수입니다. */
 const MAX_STEPS = 10;
 
+/** 발판 시간이 시계와 이보다 크게 어긋나면 바로 맞춥니다(초). 새 세계, 경기 도중 입장, 오래 멈췄다 돌아온 탭이 여기에 듭니다. */
+const TIME_SNAP = 0.5;
+/** 발판 시간이 시계와 어긋난 만큼의 이 비율을 step마다 따라잡습니다. */
+const TIME_PULL = 0.1;
+
 /** 한 프레임에 방에서 읽은 내용입니다. */
 export interface Frame {
   /** 내가 방장인지 여부. */
@@ -78,8 +83,13 @@ export class Session {
   private clock = 0;
   /** 시계를 맞추는 데 마지막으로 쓴 방장의 ms입니다. */
   private clockSeen = -1;
-  /** 세계에 마지막으로 알려 준 play 단계의 경과 시간(초)입니다. */
+  /**
+   * 세계에 마지막으로 알려 준 발판 시간(초)입니다. 시계를 따라가되 한 step에 바뀌는 양에 한도가 있어서,
+   * 시계가 한꺼번에 앞뒤로 움직여도 발판은 빨라지거나 느려질 뿐 튀지 않습니다.
+   */
   private worldTime = 0;
+  /** 방장이 마지막으로 알려 준 발판 시간(밀리초)입니다. play가 아닌 단계에서 발판을 방장과 같은 곳에 세우는 데 씁니다. */
+  private hostTime: number | null = null;
   /** 마지막 step 직전의 모습입니다. 그리기에만 씁니다. */
   private before: PrevView | null = null;
   private input: Readonly<Input> = NO_INPUT;
@@ -130,6 +140,10 @@ export class Session {
     if (frame.hosting !== this.hosting) {
       this.hosting = frame.hosting;
       this.assignBots();
+      // play 도중에 방장이 되면 내 시계에서 이어 갑니다. 받은 ms는 통신 지연만큼 묵은 값이라 그대로 쓰면 발판이 뒤로 갑니다.
+      if (frame.hosting && this.current.phase === 'play' && this.clockSeen >= 0) {
+        this.current = { ...this.current, ms: Math.round(this.clock) };
+      }
     }
     if (frame.hosting) {
       if (this.current.phase !== 'lobby') {
@@ -140,8 +154,9 @@ export class Session {
         this.current = advance(this.current, dt, this.alive(frame.peers), present, this.random);
       }
     } else if (frame.host) {
-      const { bs, ...match } = frame.host;
+      const { bs, t, ...match } = frame.host;
       this.current = match;
+      this.hostTime = t;
     }
     this.syncWorld();
     const world = this.world;
@@ -163,8 +178,8 @@ export class Session {
       this.acc -= TUNING.step;
       if (phase === 'play') this.think(world);
       this.before = { balls: world.balls(), arrows: world.arrows(), time: this.worldTime };
-      // 아직 계산하지 않고 남겨 둔 시간만큼은 시계에서 뺍니다. play가 아니면 시간을 그대로 두어 발판을 멈춥니다.
-      if (phase === 'play') this.worldTime = Math.max(0, this.clock / 1000 - this.acc);
+      // play가 아니면 방장은 시간을 그대로 두어 발판을 멈추고, 나머지는 방장이 멈춘 시간으로 천천히 맞춥니다.
+      if (phase === 'play' || !this.hosting) this.worldTime = this.flow(phase === 'play');
       events.push(...world.step(this.worldTime));
     }
     if (this.acc >= TUNING.step) this.acc = 0;
@@ -185,7 +200,7 @@ export class Session {
         if (isBot(id)) bs[id] = this.wire(this.world, id, this.botInputs.get(id) ?? NO_INPUT);
       }
     }
-    return { ...this.current, bs };
+    return { ...this.current, bs, t: Math.round(this.worldTime * 1000) };
   }
 
   /** 화면에 그릴 지금의 모습입니다. */
@@ -236,6 +251,7 @@ export class Session {
     this.clock = 0;
     this.clockSeen = -1;
     this.worldTime = 0;
+    this.hostTime = null;
     this.before = null;
     this.input = NO_INPUT;
     this.seen.clear();
@@ -263,11 +279,13 @@ export class Session {
    * play 단계의 경과 시간을 정합니다. 방장은 자기가 진행하는 ms가 곧 그 시간입니다.
    * 나머지는 프레임마다 스스로 흐르게 두고, 방장의 ms를 새로 받을 때마다 통신 지연(NET_LEAD)을 더한 값 쪽으로 당깁니다.
    * 발판의 위치는 이 시간만으로 정해지므로, 시간이 맞으면 어느 브라우저에서나 발판이 같은 곳에 있습니다.
+   * play가 아닌 단계에서는 방장이 발판을 멈춘 시간을 그대로 목표로 삼습니다.
    */
   private syncClock(dt: number): void {
     const { phase, ms } = this.current;
     if (phase !== 'play') {
       if (phase === 'countdown') this.clock = 0;
+      else if (!this.hosting && this.hostTime !== null) this.clock = this.hostTime;
       return;
     }
     if (this.hosting) {
@@ -280,6 +298,20 @@ export class Session {
       }
     }
     this.clockSeen = ms;
+  }
+
+  /**
+   * step 하나만큼 흐른 발판 시간(초)을 돌려줍니다. 시계와 어긋난 만큼은 여러 step에 나눠 따라잡습니다.
+   * play 중에는 멈춤에서 두 배 빠르기 사이로 흐르고, 그 밖에는 한 step에 1/60초까지만 앞뒤로 움직입니다.
+   * TIME_SNAP보다 크게 어긋났으면 바로 맞추고, 그때 발판을 딛고 있는 공은 세계가 함께 옮깁니다.
+   */
+  private flow(playing: boolean): number {
+    // 아직 계산하지 않고 남겨 둔 시간만큼은 시계에서 뺍니다.
+    const target = playing ? this.clock / 1000 - this.acc : this.clock / 1000;
+    const base = playing ? TUNING.step : 0;
+    const off = target - this.worldTime - base;
+    const pull = Math.abs(off) > TIME_SNAP ? off : Math.max(-TUNING.step, Math.min(TUNING.step, off * TIME_PULL));
+    return Math.max(0, this.worldTime + base + pull);
   }
 
   /** 방장이면 AI 공을 내가 정하는 공으로 바꾸고 AI를 만듭니다. 아니면 받은 상태를 따르게 합니다. */

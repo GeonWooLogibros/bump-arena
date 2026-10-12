@@ -35,9 +35,10 @@ export interface BallWire {
   ar: ArrowShot[];
 }
 
-/** 방장이 올리는 경기 상태입니다. bs는 AI들의 공입니다. */
+/** 방장이 올리는 경기 상태입니다. bs는 AI들의 공이고, t는 방장의 움직이는 발판이 놓인 시간(밀리초)입니다. */
 export interface HostWire extends Match {
   bs: Record<string, BallWire>;
+  t: number;
 }
 
 /** 방에서 읽어 낸 한 사람의 상태입니다. */
@@ -198,6 +199,7 @@ export function decodeHost(value: unknown): HostWire | null {
     roster: Array.isArray(value.roster) ? value.roster.filter(validId).slice(0, ROSTER_LIMIT) : [],
     winner: validId(value.winner) ? value.winner : null,
     bs,
+    t: whole(value.t, MAX_MS),
   };
 }
 

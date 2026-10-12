@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { MAPS, moveOffset, spawnSlot } from '../src/game/maps';
+import { TUNING } from '../src/game/modes';
 import type { Settings } from '../src/game/round';
 import { encodeBall, encodeHost, readPeer, roundKey } from '../src/net/wire';
 import type { PeerState } from '../src/net/wire';
@@ -80,6 +81,11 @@ class Room {
   extra: PeerState[] = [];
   private readonly frozen = new Set<string>();
   private readonly hidden = new Set<string>();
+  /** 다음 프레임에 그 사람에게만 줄 경과 시간(밀리초)입니다. */
+  private readonly late = new Map<string, number>();
+  /** 방장이 올린 경기 상태가 참가자에게 이만큼의 프레임 뒤에 도착합니다. */
+  lag = 0;
+  private readonly sent: (PeerState | undefined)[] = [];
   private forcedHost: string | null = null;
   private frames = 0;
 
@@ -118,9 +124,10 @@ class Room {
     this.frozen.add(id);
   }
 
-  /** 멈췄던 사람이 다시 계산하고 올리게 합니다. */
-  thaw(id: string): void {
+  /** 멈췄던 사람이 다시 계산하고 올리게 합니다. 돌아온 첫 프레임의 경과 시간은 ms입니다. */
+  thaw(id: string, ms = FRAME_MS): void {
     this.frozen.delete(id);
+    this.late.set(id, ms);
   }
 
   /** 계산은 계속하지만 다른 사람에게 보이지 않게 합니다(잠깐 끊긴 연결). */
@@ -151,13 +158,17 @@ class Room {
       }
     }
     this.frames++;
+    this.sent.push(this.states.get(host));
+    const from = this.sent[Math.max(0, this.sent.length - 1 - this.lag)];
     for (const [id, session] of this.sessions) {
       if (this.frozen.has(id)) continue;
       const hosting = id === host;
       const others = [...this.states].filter(([peer]) => peer !== id && !this.hidden.has(peer));
       const peers = [...this.extra, ...others.map(([, state]) => state)];
-      const frame: Frame = { hosting, host: hosting ? null : (this.states.get(host)?.host ?? null), peers };
-      this.events.get(id)?.push(...session.update(FRAME_MS, this.inputs.get(id) ?? NO_INPUT, frame));
+      const frame: Frame = { hosting, host: hosting ? null : (from?.host ?? null), peers };
+      const dt = this.late.get(id) ?? FRAME_MS;
+      this.late.delete(id);
+      this.events.get(id)?.push(...session.update(dt, this.inputs.get(id) ?? NO_INPUT, frame));
     }
   }
 }
@@ -834,10 +845,54 @@ describe('움직이는 발판의 시간', () => {
     let last = boatX(b);
     for (let i = 0; i < 120; i++) {
       made.run(FRAME_MS);
-      expect(Math.abs(boatX(b) - last)).toBeLessThan(0.3);
+      // 가장 빠를 때 한 프레임에 0.04m쯤 움직입니다.
+      expect(Math.abs(boatX(b) - last)).toBeLessThan(0.08);
       last = boatX(b);
     }
     expect(Math.abs(boatX(b) - expected(b.match.ms))).toBeLessThan(0.05);
+  });
+
+  it('방장이 바뀌어도 세로로 움직이는 발판이 튀거나 뒤로 가지 않는다', () => {
+    const made = room(['a', 'b'], { mapSetting: MAPS.findIndex((m) => m.id === 'lift') });
+    const a = made.get('a');
+    const b = made.get('b');
+    const liftY = (session: Session): number => {
+      const shape = session.view().shapes[2];
+      return shape.kind === 'box' ? shape.y : NaN;
+    };
+    made.runUntil(() => a.match.phase === 'play');
+    // 1.5초 무렵에는 발판이 가장 빠르게 올라가는 중입니다.
+    made.run(1500);
+    made.setHost('b');
+    for (const session of [a, b]) {
+      let last = liftY(session);
+      for (let i = 0; i < 60; i++) {
+        made.run(FRAME_MS);
+        const moved = last - liftY(session);
+        expect(moved).toBeGreaterThanOrEqual(0);
+        expect(moved).toBeLessThan(0.08);
+        last = liftY(session);
+      }
+    }
+    expect(Math.abs(liftY(a) - liftY(b))).toBeLessThan(0.3);
+  });
+
+  it('라운드가 끝나면 참가자의 발판이 방장의 발판과 같은 곳에 멈춘다', () => {
+    const made = room(['a', 'b'], { mapSetting: FERRY });
+    const a = made.get('a');
+    const b = made.get('b');
+    made.runUntil(() => a.match.phase === 'play');
+    // 2초 무렵에는 배가 가장 빠르게 움직이는 중입니다. b가 오른쪽 끝으로 나가 떨어집니다.
+    made.run(1200);
+    made.inputs.set('b', press('right'));
+    made.runUntil(() => a.match.phase === 'roundEnd');
+    made.run(1000);
+    expect(b.match.phase).toBe('roundEnd');
+    expect(Math.abs(boatX(a) - rest)).toBeGreaterThan(0.5);
+    expect(Math.abs(boatX(b) - boatX(a))).toBeLessThan(0.02);
+    const stopped = boatX(b);
+    made.run(500);
+    expect(boatX(b)).toBeCloseTo(stopped, 2);
   });
 
   it('라운드가 끝나면 발판이 멈춘다', () => {
@@ -853,6 +908,98 @@ describe('움직이는 발판의 시간', () => {
     tick(session, 1000);
     expect(session.match.phase).toBe('roundEnd');
     expect(boatX(session)).toBe(stopped);
+  });
+});
+
+describe('세로로 움직이는 발판에 탄 공', () => {
+  const LIFT = MAPS.findIndex((m) => m.id === 'lift');
+  /** play 단계의 경과 시간(한 주기 8초 안, 밀리초)입니다. 발판이 가장 빠르게 올라갈 때와 내려갈 때입니다. */
+  const WHEN = [
+    ['올라갈 때', 1500],
+    ['내려갈 때', 5500],
+  ] as const;
+
+  /** 공의 아랫면이 승강기 윗면에서 뜬 높이(m)입니다. 음수이면 발판에 묻힌 것입니다. */
+  function air(session: Session, id: string): number {
+    const lift = session.view().shapes[2];
+    if (lift.kind !== 'box') throw new Error('상자가 아닙니다.');
+    return lift.y - lift.h / 2 - (ball(session, id).y + TUNING.radius);
+  }
+
+  /** a와 b가 승강기에 올라탄 방입니다. play 단계의 경과 시간이 at(한 주기 안)이 될 때까지 진행합니다. */
+  function aboard(at: number): Room {
+    const made = room(['a', 'b'], { mapSetting: LIFT });
+    const a = made.get('a');
+    made.runUntil(() => a.match.phase === 'play');
+    // 왼쪽 발판에서 달려가 틈을 뛰어넘고, 승강기 위의 정해 둔 자리에 섭니다.
+    const seats = { a: 14.6, b: 17.4 };
+    const last = new Map<string, number>();
+    for (let i = 0; i < 450; i++) {
+      for (const id of ['a', 'b'] as const) {
+        const { x } = ball(made.get(id), id);
+        const speed = (x - (last.get(id) ?? x)) / (FRAME_MS / 1000);
+        last.set(id, x);
+        const want = Math.max(-4, Math.min(4, (seats[id] - x) * 3));
+        const input = { ...NO_INPUT, right: speed < want - 0.3, left: speed > want + 0.3, up: x > 10.9 && x < 12.2 };
+        made.inputs.set(id, i < 420 ? input : NO_INPUT);
+      }
+      made.run(FRAME_MS);
+    }
+    made.runUntil(() => a.match.ms % 8000 >= at && a.match.ms % 8000 < at + 100, 9000);
+    for (const id of ['a', 'b']) expect(Math.abs(air(made.get(id), id))).toBeLessThan(0.05);
+    return made;
+  }
+
+  /** ms 동안 진행하면서, 계산 중인 사람마다 자기 공이 살아서 발판 위에 붙어 있는지 프레임마다 확인합니다. */
+  function ride(made: Room, ms: number, ids: readonly string[] = ['a', 'b'], each?: (frame: number) => void): void {
+    for (let i = 0; i * FRAME_MS < ms; i++) {
+      each?.(i);
+      made.run(FRAME_MS);
+      for (const id of ids) {
+        expect(ball(made.get(id), id).alive).toBe(true);
+        expect(air(made.get(id), id)).toBeLessThan(0.3);
+        expect(air(made.get(id), id)).toBeGreaterThan(-0.3);
+      }
+    }
+    for (const id of ids) expect(made.get(id).match).toMatchObject({ phase: 'play', round: 1 });
+  }
+
+  /** id가 ms 동안 계산도 올리기도 못 하다가, 그 시간을 한 프레임으로 받으며 돌아옵니다. */
+  function stall(made: Room, id: string, ms: number): void {
+    made.freeze(id);
+    ride(made, ms - FRAME_MS, id === 'a' ? ['b'] : ['a']);
+    made.thaw(id, ms);
+    ride(made, 2500);
+  }
+
+  it.each(WHEN)('%s 한 프레임이 0.2~0.4초 걸려도 떠오르거나 떨어지지 않는다', (_, at) => {
+    for (const ms of [200, 300, 400]) {
+      for (const id of ['a', 'b']) stall(aboard(at), id, ms);
+    }
+  });
+
+  it.each(WHEN)('%s 방장이 바뀌어도 떠오르거나 떨어지지 않는다', (_, at) => {
+    const made = aboard(at);
+    made.setHost('b');
+    ride(made, 2500);
+    expect(made.get('b').match.ms).toBeGreaterThan(made.get('a').match.ms - 300);
+  });
+
+  it.each(WHEN)('%s 참가자의 탭이 0.6~4초 멈췄다 돌아와도 떠오르거나 떨어지지 않는다', (_, at) => {
+    for (const ms of [600, 1000, 2000, 4000]) stall(aboard(at), 'b', ms);
+  });
+
+  it.each(WHEN)('%s 방장이 0.6~4초 끊겼다 돌아와도 떠오르거나 떨어지지 않는다', (_, at) => {
+    for (const ms of [600, 1000, 2000, 4000]) stall(aboard(at), 'a', ms);
+  });
+
+  it.each(WHEN)('%s 방장의 소식이 0.1~0.2초씩 들쭉날쭉 와도 떠오르거나 떨어지지 않는다', (_, at) => {
+    for (const frames of [6, 9, 12]) {
+      const made = aboard(at);
+      ride(made, 2500, ['a', 'b'], (i) => {
+        made.lag = Math.floor(i / 20) % 2 === 1 ? frames : 0;
+      });
+    }
   });
 });
 
