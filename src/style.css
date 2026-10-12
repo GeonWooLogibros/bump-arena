@@ -46,6 +46,8 @@ body {
   width: min(400px, 100%);
   max-height: 100%;
   overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: #4a5672 transparent;
   box-sizing: border-box;
   padding: 22px 20px;
   border-radius: 18px;
@@ -64,13 +66,42 @@ body {
   background: rgba(30, 36, 51, 0.86);
 }
 
+/* 대기실은 설정만 스크롤하고, 시작하기가 있는 아래쪽 줄은 고정합니다. */
 .panel.lobby {
-  width: min(800px, 100%);
+  width: min(880px, 100%);
+  padding: 0;
+  gap: 0;
+  overflow: hidden;
+  text-align: left;
+}
+
+.lobby-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: #4a5672 transparent;
+  padding: 20px 20px 14px;
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: minmax(0, 4fr) minmax(0, 5fr);
   gap: 16px 24px;
   align-items: start;
-  text-align: left;
+}
+
+.panel::-webkit-scrollbar,
+.lobby-body::-webkit-scrollbar {
+  width: 8px;
+}
+
+.panel::-webkit-scrollbar-thumb,
+.lobby-body::-webkit-scrollbar-thumb {
+  border-radius: 4px;
+  background: #4a5672;
+}
+
+.panel::-webkit-scrollbar-track,
+.lobby-body::-webkit-scrollbar-track {
+  background: transparent;
 }
 
 .column {
@@ -80,14 +111,41 @@ body {
   min-width: 0;
 }
 
-.column.foot {
-  grid-column: 1 / -1;
+.foot {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 20px 16px;
+  border-top: 1px solid #3a4560;
   text-align: center;
 }
 
-@media (max-width: 700px) {
-  .panel.lobby {
-    grid-template-columns: 1fr;
+.foot-row {
+  display: flex;
+  gap: 8px;
+}
+
+.foot-row .btn.quiet {
+  width: auto;
+  flex: none;
+}
+
+/* 짧은 설정 두 개를 나란히 놓는 줄입니다. 자리가 모자라면 줄이 바뀝니다. */
+.duo {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 24px;
+}
+
+/* 두 열로 놓으면 맵 이름이 잘리는 너비부터는 한 열로 놓습니다. */
+@media (max-width: 880px) {
+  .lobby-body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .map-grid {
+    grid-template-columns: repeat(auto-fill, minmax(72px, 1fr));
   }
 }
 
@@ -378,10 +436,10 @@ body {
   opacity: 0.4;
 }
 
-/* 맵을 작은 그림으로 고르는 격자입니다. 좁은 화면에서는 칸 수가 줄어듭니다. */
+/* 맵을 작은 그림으로 고르는 격자입니다. 두 열로 놓는 화면에서는 여섯 칸씩 세 줄이고, 좁은 화면에서는 칸 수가 줄어듭니다. */
 .map-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(78px, 1fr));
+  grid-template-columns: repeat(6, minmax(0, 1fr));
   gap: 6px;
 }
 
@@ -391,7 +449,7 @@ body {
   align-items: stretch;
   gap: 4px;
   min-width: 0;
-  padding: 5px 4px 6px;
+  padding: 5px 3px 6px;
   text-align: center;
 }
 

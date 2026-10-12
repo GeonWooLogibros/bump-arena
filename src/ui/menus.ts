@@ -286,7 +286,9 @@ export function createMenus(root: HTMLElement, actions: MenuActions): { show(vie
     const rules = el('div', 'column');
     rules.append(el('h2', 'heading', view.isHost ? '경기 설정' : '방장이 정한 경기 설정'));
     const mode = MODES.find((m) => m.id === settings.mode) ?? MODES[0];
-    rules.append(
+    // 설정 전체가 한 화면에 들어오도록 짧은 항목은 둘씩 나란히 놓습니다. 좁은 화면에서는 줄이 바뀝니다.
+    const basics = el('div', 'duo');
+    basics.append(
       labeled(
         '모드',
         options(
@@ -295,7 +297,6 @@ export function createMenus(root: HTMLElement, actions: MenuActions): { show(vie
           canEdit,
           (value) => actions.settings({ mode: value }),
         ),
-        el('p', 'summary', mode.summary),
       ),
       labeled(
         '목표 점수',
@@ -306,6 +307,10 @@ export function createMenus(root: HTMLElement, actions: MenuActions): { show(vie
           (value) => actions.settings({ target: value }),
         ),
       ),
+    );
+    rules.append(
+      basics,
+      el('p', 'summary', mode.summary),
       labeled(
         '맵',
         mapGrid(settings.mapSetting, canEdit, (value) => actions.settings({ mapSetting: value })),
@@ -321,41 +326,50 @@ export function createMenus(root: HTMLElement, actions: MenuActions): { show(vie
     more.disabled = !canEdit || settings.bots >= view.maxBots;
     const stepper = el('div', 'options');
     stepper.append(fewer, el('span', 'count', `${settings.bots}명`), more);
-    rules.append(labeled('AI 수', stepper));
-
-    const level = [
-      options(
-        DIFFICULTIES.map((d) => ({ value: d.id, label: d.name })),
-        settings.difficulty,
-        canEdit && settings.bots > 0,
-        (value) => actions.settings({ difficulty: value }),
+    const ai = el('div', 'duo');
+    ai.append(
+      labeled('AI 수', stepper),
+      labeled(
+        'AI 수준',
+        options(
+          DIFFICULTIES.map((d) => ({ value: d.id, label: d.name })),
+          settings.difficulty,
+          canEdit && settings.bots > 0,
+          (value) => actions.settings({ difficulty: value }),
+        ),
       ),
-    ];
-    if (settings.bots === 0) level.push(el('p', 'summary', 'AI가 있을 때만 적용됩니다.'));
-    rules.append(labeled('AI 수준', ...level));
+    );
+    rules.append(ai);
+    if (settings.bots === 0) rules.append(el('p', 'summary', 'AI 수준은 AI가 있을 때만 적용됩니다.'));
 
-    const foot = el('div', 'column foot');
+    // 화면이 작아 설정을 스크롤해야 할 때에도 시작하기(준비하기)와 나가기는 아래에 고정되어 항상 보입니다.
+    const foot = el('div', 'foot');
+    const leave = button('나가기', actions.leave, 'btn quiet');
+    const go = el('div', 'foot-row');
     if (!view.settled) {
       foot.append(el('p', 'hint', '방의 상태를 확인하는 중입니다.'));
+      go.append(leave);
     } else if (view.isHost) {
       const start = button('시작하기', actions.start, 'btn primary');
       start.disabled = !view.canStart;
-      foot.append(start);
       if (!view.canStart) {
         const alone = view.rows.length < 2;
         foot.append(
           el('p', 'hint', alone ? '두 명 이상이어야 시작할 수 있습니다.' : '모두 준비하면 시작할 수 있습니다.'),
         );
       }
+      go.append(leave, start);
     } else {
-      foot.append(button(view.ready ? '준비 취소' : '준비하기', actions.ready, view.ready ? 'btn' : 'btn primary'));
       foot.append(
         el('p', 'hint', view.ready ? '방장이 시작하기를 기다립니다.' : '준비하면 방장이 경기를 시작할 수 있습니다.'),
       );
+      go.append(leave, button(view.ready ? '준비 취소' : '준비하기', actions.ready, view.ready ? 'btn' : 'btn primary'));
     }
-    foot.append(button('나가기', actions.leave, 'btn quiet'));
+    foot.append(go);
 
-    panel.append(people, rules, foot);
+    const body = el('div', 'lobby-body');
+    body.append(people, rules);
+    panel.append(body, foot);
     return panel;
   }
 
