@@ -197,15 +197,27 @@ describe('연습하기', () => {
     expect(c.mp.lobbyView()?.settings).toMatchObject({ mode: 'arrows', target: 3, bots: 5 });
   });
 
+  it('AI 수준은 처음에 보통이고, 세 가지 가운데 하나로만 바꿀 수 있다', () => {
+    const c = practice();
+    expect(c.mp.lobbyView()?.settings.difficulty).toBe('normal');
+    c.mp.setSettings({ difficulty: 'hard' });
+    expect(c.mp.lobbyView()?.settings.difficulty).toBe('hard');
+    c.mp.setSettings({ difficulty: 'expert' } as unknown as Partial<Settings>);
+    c.mp.setSettings({ mode: 'arrows' });
+    expect(c.mp.lobbyView()?.settings).toMatchObject({ mode: 'arrows', difficulty: 'hard' });
+    c.mp.setSettings({ difficulty: 'easy' });
+    expect(c.mp.session?.match.settings.difficulty).toBe('easy');
+  });
+
   it('잘못된 설정 값은 무시하고 AI 수는 정수로 바꾼다', () => {
     const c = practice();
     c.mp.setSettings({ mode: 'grapple', target: 7, mapSetting: 2, bots: 3 });
     const wrong = { mode: 'laser', target: 4, mapSetting: 16, bots: NaN } as unknown as Partial<Settings>;
     c.mp.setSettings(wrong);
     c.mp.setSettings({ mapSetting: 1.5, bots: Infinity });
-    expect(c.mp.lobbyView()?.settings).toEqual({ mode: 'grapple', target: 7, mapSetting: 2, bots: 3 });
+    expect(c.mp.lobbyView()?.settings).toEqual({ mode: 'grapple', target: 7, mapSetting: 2, bots: 3, difficulty: 'normal' });
     c.mp.setSettings({ bots: 2.7, mapSetting: -1 });
-    expect(c.mp.lobbyView()?.settings).toEqual({ mode: 'grapple', target: 7, mapSetting: -1, bots: 2 });
+    expect(c.mp.lobbyView()?.settings).toEqual({ mode: 'grapple', target: 7, mapSetting: -1, bots: 2, difficulty: 'normal' });
     expect(c.mp.lobbyView()?.rows.map((row) => row.id)).toEqual(['me', 'bot1', 'bot2']);
   });
 
@@ -463,21 +475,27 @@ describe('설정과 시작', () => {
     const hub = new FakeHub();
     const [host, guest] = await room(hub, 1);
     guest.mp.toggleReady();
-    guest.mp.setSettings({ mode: 'grapple', bots: 3 });
+    guest.mp.setSettings({ mode: 'grapple', bots: 3, difficulty: 'hard' });
     guest.mp.start();
     pass(hub, 100, host, guest);
     expect(guest.mp.stage).toBe('lobby');
     expect(host.mp.stage).toBe('lobby');
-    expect(host.mp.lobbyView()?.settings).toMatchObject({ mode: 'classic', bots: 1 });
-    expect(guest.mp.lobbyView()?.settings).toMatchObject({ mode: 'classic', bots: 1 });
+    expect(host.mp.lobbyView()?.settings).toMatchObject({ mode: 'classic', bots: 1, difficulty: 'normal' });
+    expect(guest.mp.lobbyView()?.settings).toMatchObject({ mode: 'classic', bots: 1, difficulty: 'normal' });
   });
 
   it('방장이 바꾼 설정이 손님의 대기실에도 보인다', async () => {
     const hub = new FakeHub();
     const [host, guest] = await room(hub, 1);
-    host.mp.setSettings({ mode: 'arrows', target: 7, bots: 4 });
+    host.mp.setSettings({ mode: 'arrows', target: 7, bots: 4, difficulty: 'easy' });
     pass(hub, 100, host, guest);
-    expect(guest.mp.lobbyView()?.settings).toEqual({ mode: 'arrows', target: 7, mapSetting: -1, bots: 4 });
+    expect(guest.mp.lobbyView()?.settings).toEqual({
+      mode: 'arrows',
+      target: 7,
+      mapSetting: -1,
+      bots: 4,
+      difficulty: 'easy',
+    });
     expect(guest.mp.lobbyView()?.rows).toHaveLength(6);
     host.mp.setSettings({ bots: 5 });
     expect(host.mp.lobbyView()?.settings.bots).toBe(4);

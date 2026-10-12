@@ -15,7 +15,7 @@ const ball = (): BallWire => ({
 });
 
 const host = (): HostWire => ({
-  settings: { mode: 'arrows', target: 7, mapSetting: -1, bots: 2 },
+  settings: { mode: 'arrows', target: 7, mapSetting: -1, bots: 2, difficulty: 'hard' },
   game: 3,
   phase: 'play',
   ms: 1234,
@@ -110,12 +110,23 @@ describe('방장 상태 왕복', () => {
   it('설정과 숫자를 범위 안으로 고정합니다', () => {
     const wire = {
       ...(json(encodeHost(host())) as object),
-      settings: { mode: '?', target: 4, mapSetting: 99, bots: -3 },
+      settings: { mode: '?', target: 4, mapSetting: 99, bots: -3, difficulty: 'expert' },
       game: -5, round: 1e9, ms: 1e9, map: 77, winner: 5,
     };
     const decoded = decodeHost(wire);
-    expect(decoded?.settings).toEqual({ mode: 'classic', target: 5, mapSetting: 15, bots: 0 });
+    expect(decoded?.settings).toEqual({ mode: 'classic', target: 5, mapSetting: 15, bots: 0, difficulty: 'normal' });
     expect(decoded).toMatchObject({ game: 0, round: 1_000_000, ms: 600_000, map: 15, winner: null });
+  });
+
+  it('AI 수준은 세 가지를 그대로 읽고, 없거나 모르는 값이면 보통으로 읽습니다', () => {
+    const withLevel = (difficulty: unknown) =>
+      decodeHost({ ...(json(encodeHost(host())) as object), settings: { ...host().settings, difficulty } });
+    for (const difficulty of ['easy', 'normal', 'hard']) expect(withLevel(difficulty)?.settings.difficulty).toBe(difficulty);
+    for (const difficulty of [undefined, null, 1, 'HARD', ['hard'], { id: 'hard' }]) {
+      expect(withLevel(difficulty)?.settings.difficulty).toBe('normal');
+    }
+    const { difficulty, ...old } = host().settings;
+    expect(decodeHost({ ...(json(encodeHost(host())) as object), settings: old })?.settings.difficulty).toBe('normal');
   });
 
   it('맵 번호는 16개 맵을 모두 그대로 읽습니다', () => {

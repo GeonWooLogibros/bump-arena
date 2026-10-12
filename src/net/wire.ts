@@ -1,4 +1,5 @@
 /** 방에 올리는 값(presence)의 형식. 보내기 전에 줄이고, 받을 때는 믿지 않고 하나씩 검사합니다. */
+import { readDifficulty } from '../game/bot-skill';
 import { cleanName, COLORS } from '../game/lobby';
 import { MAPS, RANDOM_MAP } from '../game/maps';
 import { DEFAULT_SETTINGS } from '../game/round';
@@ -186,6 +187,7 @@ export function decodeHost(value: unknown): HostWire | null {
       target,
       mapSetting: ranged(s.mapSetting, RANDOM_MAP, MAPS.length - 1, DEFAULT_SETTINGS.mapSetting),
       bots: ranged(s.bots, 0, 5, DEFAULT_SETTINGS.bots),
+      difficulty: readDifficulty(s.difficulty),
     },
     game: whole(value.game, MAX_ROUND),
     phase,

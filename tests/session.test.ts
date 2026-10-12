@@ -196,6 +196,21 @@ describe('연습 경기', () => {
     expect(ball(session, 'me').x).toBeGreaterThan(startX + 0.5);
   });
 
+  it('AI는 설정한 수준으로 움직이고, 정하지 않으면 보통이다', () => {
+    const path = (patch: Partial<Settings>): number[] => {
+      const session = practice(patch);
+      const xs: number[] = [];
+      for (let i = 0; i < 12; i++) {
+        tick(session, 500);
+        xs.push(ball(session, 'bot1').x);
+      }
+      return xs;
+    };
+    expect(path({ difficulty: 'normal' })).toEqual(path({}));
+    expect(path({ difficulty: 'easy' })).not.toEqual(path({}));
+    expect(path({ difficulty: 'hard' })).not.toEqual(path({}));
+  });
+
   it('AI가 스스로 움직인다', () => {
     const session = practice();
     tick(session, 3000);

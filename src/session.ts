@@ -1,5 +1,6 @@
 /** 한 경기 실행. 물리 세계, 경기 진행, AI, 받은 상태 맞추기를 묶습니다. */
 import { Bot } from './game/bot';
+import { SKILLS } from './game/bot-skill';
 import { MAX_PLAYERS } from './game/lobby';
 import { MAPS, spawnSlot } from './game/maps';
 import type { GameMap, Shape } from './game/maps';
@@ -289,7 +290,7 @@ export class Session {
     for (const id of this.current.roster) {
       if (!isBot(id)) continue;
       this.world.setLocal(id, this.hosting);
-      if (this.hosting) this.bots.set(id, new Bot(this.random));
+      if (this.hosting) this.bots.set(id, new Bot(this.random, SKILLS[this.current.settings.difficulty]));
     }
   }
 

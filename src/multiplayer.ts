@@ -1,4 +1,5 @@
 /** 방과 대기실, 방장 선출, 상태 송수신. 방의 presence를 읽고 쓰기만 하며, 화면 요소는 사용하지 않습니다. */
+import { readDifficulty } from './game/bot-skill';
 import {
   COLORS,
   MAX_PLAYERS,
@@ -199,7 +200,7 @@ export class Multiplayer {
     if (this.stage !== 'lobby' || !session) return;
     const { hosting, humans } = this.scan();
     if (!hosting) return;
-    const { mode, target, mapSetting, bots } = patch;
+    const { mode, target, mapSetting, bots, difficulty } = patch;
     const clean: Partial<Settings> = {};
     if (mode !== undefined && readMode(mode) === mode) clean.mode = mode;
     if (target !== undefined && TARGETS.some((t) => t === target)) clean.target = target;
@@ -207,6 +208,7 @@ export class Multiplayer {
       clean.mapSetting = mapSetting;
     }
     if (typeof bots === 'number' && Number.isFinite(bots)) clean.bots = Math.floor(bots);
+    if (difficulty !== undefined && readDifficulty(difficulty) === difficulty) clean.difficulty = difficulty;
     session.setSettings(clean);
     session.setSettings({ bots: this.botCount(humans.length) });
   }

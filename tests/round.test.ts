@@ -16,6 +16,10 @@ describe('startMatch', () => {
     expect(m.roster).toEqual(['a', 'b', 'c']);
   });
 
+  it('기본 설정의 AI 수준은 보통입니다', () => {
+    expect(DEFAULT_SETTINGS.difficulty).toBe('normal');
+  });
+
   it('한 명으로는 시작되지 않습니다', () => {
     const lobby = lobbyMatch(DEFAULT_SETTINGS);
     expect(startMatch(lobby, ['a'], rnd)).toBe(lobby);

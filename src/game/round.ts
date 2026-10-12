@@ -1,3 +1,5 @@
+import { DEFAULT_DIFFICULTY } from './bot-skill';
+import type { Difficulty } from './bot-skill';
 import { RANDOM_MAP, nextMap } from './maps';
 import { DEFAULT_TARGET, TUNING } from './modes';
 import type { Mode } from './modes';
@@ -11,10 +13,18 @@ export interface Settings {
   target: number;
   mapSetting: number;
   bots: number;
+  /** AI의 수준입니다. AI가 없으면 쓰이지 않습니다. */
+  difficulty: Difficulty;
 }
 
-/** 기본 설정입니다. 클래식, 5점, 무작위 맵, AI 1명입니다. */
-export const DEFAULT_SETTINGS: Settings = { mode: 'classic', target: DEFAULT_TARGET, mapSetting: RANDOM_MAP, bots: 1 };
+/** 기본 설정입니다. 클래식, 5점, 무작위 맵, 보통 수준의 AI 1명입니다. */
+export const DEFAULT_SETTINGS: Settings = {
+  mode: 'classic',
+  target: DEFAULT_TARGET,
+  mapSetting: RANDOM_MAP,
+  bots: 1,
+  difficulty: DEFAULT_DIFFICULTY,
+};
 
 /** 방장이 관리하는 경기 상태입니다. */
 export interface Match {
