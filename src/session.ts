@@ -46,6 +46,19 @@ export interface SessionView {
   /** 내가 이번 라운드에 참가하지 않고 구경 중인지 여부. */
   watching: boolean;
   me: string;
+  /** 마지막 step 직전의 모습입니다. 그리기에서 지금 모습과 이어 그리는 데 씁니다. 라운드가 막 시작되어 아직 없으면 null입니다. */
+  prev: PrevView | null;
+  /** 발판의 위치를 정한 시간(초)입니다. */
+  time: number;
+  /** 마지막 step 뒤로 지난 시간을 step 길이로 나눈 값(0~1)입니다. */
+  alpha: number;
+}
+
+/** step 하나를 진행하기 직전의 공, 화살, 발판 시간입니다. */
+export interface PrevView {
+  balls: BallView[];
+  arrows: ArrowView[];
+  time: number;
 }
 
 /** 한 경기를 실행합니다. 내 공과 (방장일 때의) AI 공은 여기서 정하고, 나머지는 받은 상태를 따릅니다. */
@@ -66,6 +79,8 @@ export class Session {
   private clockSeen = -1;
   /** 세계에 마지막으로 알려 준 play 단계의 경과 시간(초)입니다. */
   private worldTime = 0;
+  /** 마지막 step 직전의 모습입니다. 그리기에만 씁니다. */
+  private before: PrevView | null = null;
   private input: Readonly<Input> = NO_INPUT;
   private readonly bots = new Map<string, Bot>();
   private readonly botInputs = new Map<string, Input>();
@@ -146,6 +161,7 @@ export class Session {
     for (let steps = 0; steps < MAX_STEPS && this.acc >= TUNING.step; steps++) {
       this.acc -= TUNING.step;
       if (phase === 'play') this.think(world);
+      this.before = { balls: world.balls(), arrows: world.arrows(), time: this.worldTime };
       // 아직 계산하지 않고 남겨 둔 시간만큼은 시계에서 뺍니다. play가 아니면 시간을 그대로 두어 발판을 멈춥니다.
       if (phase === 'play') this.worldTime = Math.max(0, this.clock / 1000 - this.acc);
       events.push(...world.step(this.worldTime));
@@ -182,6 +198,9 @@ export class Session {
       arrows: this.world?.arrows() ?? [],
       watching: phase !== 'lobby' && !roster.includes(this.me),
       me: this.me,
+      prev: this.before,
+      time: this.worldTime,
+      alpha: Math.min(1, this.acc / TUNING.step),
     };
   }
 
@@ -216,6 +235,7 @@ export class Session {
     this.clock = 0;
     this.clockSeen = -1;
     this.worldTime = 0;
+    this.before = null;
     this.input = NO_INPUT;
     this.seen.clear();
     this.gone.clear();
@@ -316,7 +336,15 @@ export class Session {
       if (ball.a) {
         const { b } = ball;
         world.setInput(id, unpackInput(ball.i));
-        world.correct(id, { ...b, x: b.x + b.vx * NET_LEAD, y: b.y + b.vy * NET_LEAD });
+        const to = { ...b, x: b.x + b.vx * NET_LEAD, y: b.y + b.vy * NET_LEAD };
+        if (world.correct(id, to)) {
+          // 바로 옮겨진 공은 직전 모습도 같은 곳에 두어, 화면에서 그 사이를 가로질러 그리지 않게 합니다.
+          const was = this.before?.balls.find((ball) => ball.id === id);
+          if (was) {
+            was.x = to.x;
+            was.y = to.y;
+          }
+        }
         world.setRope(id, ball.rp);
         world.setAim(id, ball.am && { dx: ball.am[0], dy: ball.am[1], charge: ball.am[2] });
       }

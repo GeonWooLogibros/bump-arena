@@ -840,3 +840,89 @@ describe('움직이는 발판의 시간', () => {
     expect(boatX(session)).toBe(stopped);
   });
 });
+
+describe('이어 그리기에 쓰는 직전 모습', () => {
+  it('라운드가 막 시작되어 step을 진행하기 전에는 없다', () => {
+    const session = practice();
+    expect(session.view().prev).toBeNull();
+    tick(session, 1000);
+    expect(session.view().prev).toBeNull();
+    expect(session.view().alpha).toBe(0);
+  });
+
+  it('step을 진행한 뒤에는 마지막 step 직전의 공 위치를 담는다', () => {
+    const session = practice();
+    tick(session, 3200);
+    tick(session, 320, press('right'));
+    const view = session.view();
+    const now = ball(session, 'me');
+    const was = view.prev?.balls.find((b) => b.id === 'me');
+    expect(was).toBeDefined();
+    // 오른쪽으로 가는 중이므로 직전 위치는 조금 왼쪽입니다.
+    expect(now.x - was!.x).toBeGreaterThan(0);
+    expect(now.x - was!.x).toBeLessThan(0.5);
+  });
+
+  it('alpha는 마지막 step 뒤로 남은 시간의 비율이다', () => {
+    const session = practice();
+    tick(session, 3200);
+    for (let i = 0; i < 40; i++) {
+      session.update(7, NO_INPUT, SOLO);
+      const { alpha } = session.view();
+      expect(alpha).toBeGreaterThanOrEqual(0);
+      expect(alpha).toBeLessThan(1);
+    }
+    // 7ms 프레임에서는 step 사이에 그리는 프레임이 생기므로 0이 아닌 값이 나옵니다.
+    session.update(7, NO_INPUT, SOLO);
+    const a = session.view().alpha;
+    session.update(7, NO_INPUT, SOLO);
+    expect(session.view().alpha).not.toBe(a);
+  });
+
+  it('step을 진행하지 않은 프레임에서는 직전 모습이 그대로다', () => {
+    const session = practice();
+    tick(session, 3200);
+    const before = session.view().prev;
+    session.update(0, NO_INPUT, SOLO);
+    expect(session.view().prev).toBe(before);
+  });
+
+  it('새 라운드가 시작되면 지난 라운드의 모습을 버린다', () => {
+    const session = practice();
+    tick(session, 3200);
+    expect(session.view().prev).not.toBeNull();
+    tickUntil(session, () => session.match.round === 2, press('left'));
+    expect(session.view().prev).toBeNull();
+  });
+
+  it('원격 공이 받은 위치로 바로 옮겨지면 직전 모습도 같은 곳에 둔다', () => {
+    const a = new Session('a', () => 0);
+    a.setSettings({ bots: 0, mapSetting: 0 });
+    a.start(['a', 'b']);
+    const b = new Session('b', () => 0);
+    const hostState = publish(a, 'a', 1, true);
+    b.update(FRAME_MS, NO_INPUT, { hosting: false, host: hostState.host, peers: [hostState] });
+    const peer = publish(b, 'b', 1, false);
+    tick(a, 3200, NO_INPUT, { hosting: true, host: null, peers: [peer] });
+    expect(a.view().prev).not.toBeNull();
+
+    const wire = peer.ball!;
+    const far = { ...peer, n: 2, ball: { ...wire, b: { ...wire.b, x: wire.b.x + 5 } } };
+    a.update(0, NO_INPUT, { hosting: true, host: null, peers: [far] });
+    const view = a.view();
+    const now = view.balls.find((ball) => ball.id === 'b')!;
+    const was = view.prev!.balls.find((ball) => ball.id === 'b')!;
+    expect(now.x).toBeCloseTo(wire.b.x + 5, 5);
+    expect(was.x).toBe(now.x);
+    expect(was.y).toBe(now.y);
+  });
+
+  it('화살에는 주인별 번호가 붙는다', () => {
+    const session = practice({ mode: 'arrows' });
+    tick(session, 3200);
+    tick(session, 500, press('special', 'up'));
+    tick(session, 100);
+    const mine = session.view().arrows.filter((arrow) => arrow.owner === 'me');
+    expect(mine.map((arrow) => arrow.id)).toEqual([1]);
+  });
+});
