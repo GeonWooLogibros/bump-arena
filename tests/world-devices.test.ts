@@ -218,6 +218,16 @@ describe('튕기는 발판', () => {
     return 12 - top;
   }
 
+  it('튕기는 발판에 닿은 충돌에는 표시가 붙습니다', () => {
+    for (const bouncy of [false, true]) {
+      const world = new World(mapOf({ kind: 'box', x: 16, y: 13, w: 10, h: 1, bouncy }), 'classic');
+      world.addBall('a', 16, 10, true);
+      const hits = run(world, 120).filter((e) => e.type === 'hit');
+      expect(hits.length).toBeGreaterThan(0);
+      expect(hits.every((e) => e.bouncy === bouncy)).toBe(true);
+    }
+  });
+
   it('보통 발판보다 공을 훨씬 높이 튕겨 냅니다', () => {
     const plain = rebound(false);
     const bouncy = rebound(true);

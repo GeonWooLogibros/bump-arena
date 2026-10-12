@@ -380,9 +380,9 @@ describe('원격 공 맞추기', () => {
   it('가까우면 속도로, 멀면 바로 옮겨 맞춘다', () => {
     const world = new World(FLAT, 'classic');
     world.addBall('r', 10, 5, false);
-    world.correct('r', { x: 10.5, y: 5, ...rest });
+    expect(world.correct('r', { x: 10.5, y: 5, ...rest })).toBe(false);
     expect(world.state('r')!.vx).toBeCloseTo(3, 5);
-    world.correct('r', { x: 20, y: 5, ...rest });
+    expect(world.correct('r', { x: 20, y: 5, ...rest })).toBe(true);
     expect(world.state('r')!.x).toBe(20);
     expect(world.balls()[0].x).toBe(20);
   });
@@ -390,7 +390,7 @@ describe('원격 공 맞추기', () => {
   it('local 공에는 효과가 없다', () => {
     const world = new World(FLAT, 'classic');
     world.addBall('a', 10, 5, true);
-    world.correct('a', { x: 20, y: 5, ...rest });
+    expect(world.correct('a', { x: 20, y: 5, ...rest })).toBe(false);
     expect(world.state('a')!.x).toBe(10);
   });
 });

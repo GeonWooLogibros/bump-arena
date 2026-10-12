@@ -1,5 +1,5 @@
 import { Box, Circle, Polygon, RopeJoint, Vec2, World as PlanckWorld } from 'planck';
-import type { Body, Fixture } from 'planck';
+import type { Body, Contact, Fixture } from 'planck';
 import { mapAt, moveOffset } from '../game/maps';
 import type { GameMap, Shape } from '../game/maps';
 import { TUNING } from '../game/modes';
@@ -69,9 +69,27 @@ export interface BallView {
   aim: { dx: number; dy: number; charge: number } | null;
 }
 
-/** step 동안 일어난 일입니다. hit의 strength는 0~1입니다. */
+/** 센 충돌 하나입니다. 소리와 효과에만 쓰며 통신으로 보내지 않습니다. */
+export interface HitEvent {
+  type: 'hit';
+  /** 충돌 세기(0~1)입니다. */
+  strength: number;
+  /** 닿은 지점입니다. */
+  x: number;
+  y: number;
+  /** a에서 b를 향하는 단위 벡터입니다. */
+  nx: number;
+  ny: number;
+  /** 부딪친 두 물체입니다. 공이면 그 번호이고 발판이면 null입니다. */
+  a: string | null;
+  b: string | null;
+  /** 튕기는 발판에 닿았는지 여부. */
+  bouncy: boolean;
+}
+
+/** step 동안 일어난 일입니다. hit은 센 것부터 놓입니다. */
 export type WorldEvent =
-  | { type: 'hit'; strength: number }
+  | HitEvent
   | { type: 'out'; id: string; x: number; y: number; cause: 'fall' | 'arrow' }
   | { type: 'jump'; id: string }
   | { type: 'rope'; id: string }
@@ -175,7 +193,8 @@ export class World {
   private readonly movers: Mover[] = [];
   private readonly arrowList: Arrows;
   private pending: WorldEvent[] = [];
-  private hitImpulse = 0;
+  /** 이번 step에 소리가 날 만큼 세게 부딪친 접촉들입니다. */
+  private readonly hits = new Map<Contact, HitEvent>();
   private time = 0;
   /** play 단계가 시작된 뒤 지난 시간(초)입니다. 움직이는 발판의 위치는 이 값만으로 정해집니다. */
   private clock = 0;
@@ -214,8 +233,8 @@ export class World {
       contact.setRestitution(Math.min(TUNING.bouncyRestitution, most));
     });
     this.world.on('post-solve', (contact, impulse) => {
-      if (!contact.getFixtureA().getUserData() && !contact.getFixtureB().getUserData()) return;
-      this.hitImpulse = Math.max(this.hitImpulse, impulse.normalImpulses[0] ?? 0);
+      const force = impulse.normalImpulses[0] ?? 0;
+      if (force >= HIT_MIN) this.noteHit(contact, force);
     });
   }
 
@@ -285,7 +304,7 @@ export class World {
   step(clock: number = this.clock + TUNING.step): WorldEvent[] {
     const events: WorldEvent[] = this.pending;
     this.pending = [];
-    this.hitImpulse = 0;
+    this.hits.clear();
     this.clock = Math.max(0, clock);
     this.moveTo(this.clock);
     for (const [id, entry] of this.entries) {
@@ -312,7 +331,7 @@ export class World {
       }
     }
     this.stepArrows(events);
-    if (this.hitImpulse >= HIT_MIN) events.push({ type: 'hit', strength: Math.min(1, this.hitImpulse / HIT_MAX) });
+    if (this.hits.size > 0) events.push(...[...this.hits.values()].sort((p, q) => q.strength - p.strength));
     return events;
   }
 
@@ -350,14 +369,18 @@ export class World {
     if (entry?.alive) this.destroy(entry);
   }
 
-  /** 원격 공을 받은 상태에 맞춥니다. 차이가 1m 미만이면 속도를 '받은 속도 + 차이×6'으로, 아니면 바로 옮깁니다. */
-  correct(id: string, state: BallState): void {
+  /**
+   * 원격 공을 받은 상태에 맞춥니다. 차이가 1m 미만이면 속도를 '받은 속도 + 차이×6'으로, 아니면 바로 옮깁니다.
+   * 바로 옮겼으면 true를 돌려줍니다.
+   */
+  correct(id: string, state: BallState): boolean {
     const entry = this.entries.get(id);
-    if (!entry || entry.local || !entry.alive || !entry.body) return;
+    if (!entry || entry.local || !entry.alive || !entry.body) return false;
     const p = entry.body.getPosition();
     const dx = state.x - p.x;
     const dy = state.y - p.y;
-    if (Math.hypot(dx, dy) < 1) {
+    const near = Math.hypot(dx, dy) < 1;
+    if (near) {
       entry.body.setLinearVelocity(Vec2(state.vx + dx * 6, state.vy + dy * 6));
     } else {
       entry.body.setTransform(Vec2(state.x, state.y), entry.body.getAngle());
@@ -367,6 +390,7 @@ export class World {
     }
     entry.body.setAngularVelocity(state.av);
     entry.body.setAwake(true);
+    return !near;
   }
 
   /** 공에 걸린 줄의 고정점이 지금 있는 곳입니다. 줄이 없으면 null입니다. */
@@ -433,6 +457,37 @@ export class World {
   /** 날아가거나 꽂혀 있는 화살들의 모습입니다. */
   arrows(): ArrowView[] {
     return this.arrowList.views();
+  }
+
+  /** 센 충돌이 일어난 접촉을 기억합니다. 한 step에 같은 접촉이 여러 번 풀리면 가장 센 것만 남깁니다. */
+  private noteHit(contact: Contact, force: number): void {
+    const fa = contact.getFixtureA();
+    const fb = contact.getFixtureB();
+    const ua = fa.getUserData();
+    const ub = fb.getUserData();
+    const a = typeof ua === 'string' ? ua : null;
+    const b = typeof ub === 'string' ? ub : null;
+    if (a === null && b === null) return;
+    const strength = Math.min(1, force / HIT_MAX);
+    const seen = this.hits.get(contact);
+    if (seen && seen.strength >= strength) return;
+    // normal은 A에서 B를 향합니다. 닿은 지점은 공의 중심에서 반지름만큼 나간 곳으로 봅니다.
+    const normal = contact.getWorldManifold(null)?.normal;
+    const nx = normal?.x ?? 0;
+    const ny = normal?.y ?? (a !== null ? 1 : -1);
+    const center = (a !== null ? fa : fb).getBody().getPosition();
+    const reach = a !== null ? TUNING.radius : -TUNING.radius;
+    this.hits.set(contact, {
+      type: 'hit',
+      strength,
+      x: center.x + nx * reach,
+      y: center.y + ny * reach,
+      nx,
+      ny,
+      a,
+      b,
+      bouncy: Math.max(fa.getRestitution(), fb.getRestitution()) >= TUNING.bouncyRestitution,
+    });
   }
 
   /** 화살에 맞을 수 있는 공(살아 있는 local 공)의 목록입니다. */

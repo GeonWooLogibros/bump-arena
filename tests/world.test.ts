@@ -143,3 +143,48 @@ describe('화살 모드', () => {
     expect(Math.abs(world.state('a')!.vx)).toBeLessThan(0.05);
   });
 });
+
+describe('충돌 이벤트', () => {
+  it('발판에 떨어진 공의 충돌은 닿은 지점과 방향, 공의 번호를 알려 준다', () => {
+    const world = new World(FLAT, 'classic');
+    world.addBall('a', 16, 9, true);
+    const hits = run(world, 120).filter((e) => e.type === 'hit');
+    expect(hits.length).toBeGreaterThan(0);
+    const [hit] = hits;
+    expect([hit.a, hit.b].sort()).toEqual(['a', null]);
+    expect(hit.x).toBeCloseTo(16, 1);
+    // 발판의 윗면(y 12.5) 근처입니다. 공이 튀어 오르기 시작한 뒤의 위치로 구하므로 조금 위일 수 있습니다.
+    expect(Math.abs(hit.y - 12.5)).toBeLessThan(0.15);
+    // 방향은 a에서 b를 향하므로, 공에서 발판 쪽이 아래입니다.
+    expect(hit.a === 'a' ? hit.ny : -hit.ny).toBeCloseTo(1);
+    expect(hit.bouncy).toBe(false);
+    expect(hit.strength).toBeGreaterThan(0);
+    expect(hit.strength).toBeLessThanOrEqual(1);
+  });
+
+  it('공끼리 부딪치면 두 공의 번호와 그 사이의 지점을 알려 준다', () => {
+    const world = settled();
+    world.addBall('b', 22, 11.9, true);
+    run(world, 120);
+    world.setInput('a', press('right'));
+    world.setInput('b', press('left'));
+    const hit = run(world, 120).find((e) => e.type === 'hit' && e.a !== null && e.b !== null);
+    if (hit?.type !== 'hit') throw new Error('공끼리의 충돌이 없습니다.');
+    expect([hit.a, hit.b].sort()).toEqual(['a', 'b']);
+    expect(hit.x).toBeGreaterThan(16);
+    expect(hit.x).toBeLessThan(22);
+    // a에서 b를 향하는 방향입니다.
+    expect(hit.a === 'a' ? hit.nx : -hit.nx).toBeCloseTo(1, 1);
+  });
+
+  it('한 step의 충돌은 센 것부터 놓인다', () => {
+    const world = new World(FLAT, 'classic');
+    world.addBall('a', 10, 6, true);
+    world.addBall('b', 20, 9, true);
+    world.addBall('c', 22, 9, true);
+    for (let i = 0; i < 240; i++) {
+      const hits = world.step().filter((e) => e.type === 'hit');
+      for (let k = 1; k < hits.length; k++) expect(hits[k].strength).toBeLessThanOrEqual(hits[k - 1].strength);
+    }
+  });
+});

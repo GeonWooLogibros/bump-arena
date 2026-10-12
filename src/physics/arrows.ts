@@ -14,9 +14,10 @@ export interface ArrowShot {
   age: number;
 }
 
-/** 화면에 그릴 화살 하나의 모습입니다. */
+/** 화면에 그릴 화살 하나의 모습입니다. id는 주인별 화살 번호입니다. */
 export interface ArrowView {
   owner: string;
+  id: number;
   x: number;
   y: number;
   angle: number;
@@ -176,7 +177,7 @@ export class Arrows {
   views(): ArrowView[] {
     return this.list.map((a) => {
       const [dx, dy] = this.carried(a);
-      return { owner: a.owner, x: a.x + dx, y: a.y + dy, angle: a.angle, stuck: a.stuck };
+      return { owner: a.owner, id: a.shot.id, x: a.x + dx, y: a.y + dy, angle: a.angle, stuck: a.stuck };
     });
   }
 
