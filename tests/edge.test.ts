@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { TUNING } from '../src/game/modes';
-import { EDGE_INSET, edgeMark } from '../src/render/edge';
+import { EDGE_INSET, blinkPhase, edgeMark } from '../src/render/edge';
 import type { EdgeMark } from '../src/render/edge';
 
 function mark(x: number, y: number): EdgeMark | null {
@@ -44,5 +44,28 @@ describe('화면 밖 공의 표시', () => {
     expect(m.y).toBe(EDGE_INSET);
     expect(Math.sin(m.angle)).toBeCloseTo(-1);
     expect(m.danger).toBe(0);
+  });
+});
+
+describe('내 공 표시의 깜빡임', () => {
+  it('위험도가 클수록 위상이 빨리 진행한다', () => {
+    expect(blinkPhase(0, 16, 0)).toBeCloseTo(0.16);
+    expect(blinkPhase(0, 16, 1)).toBeCloseTo(0.48);
+  });
+
+  it('시각이 아무리 커도 위험도가 조금 바뀔 때 위상이 튀지 않는다', () => {
+    let phase = 0;
+    let danger = 0.2;
+    for (let i = 0; i < 5000; i++) {
+      const next = blinkPhase(phase, 16, (danger += 0.0001));
+      const moved = (next - phase + Math.PI * 2) % (Math.PI * 2);
+      expect(moved).toBeLessThan(0.5);
+      phase = next;
+    }
+  });
+
+  it('멈췄다 돌아온 프레임은 0.1초까지만 진행하고 뒤로 간 시각은 무시한다', () => {
+    expect(blinkPhase(1, 5000, 0)).toBeCloseTo(2);
+    expect(blinkPhase(1, -30, 1)).toBe(1);
   });
 });

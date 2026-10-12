@@ -7,7 +7,7 @@ import type { PlayerInfo } from '../multiplayer';
 import { corners } from '../physics/geometry';
 import type { ArrowView, BallView } from '../physics/world';
 import type { SessionView } from '../session';
-import { edgeMark } from './edge';
+import { blinkPhase, edgeMark } from './edge';
 import type { EdgeMark } from './edge';
 import { SHARD_LIFE, SPARK_LIFE } from './effects';
 import type { Effects } from './effects';
@@ -355,6 +355,9 @@ function drawEffects(ctx: CanvasRenderingContext2D, effects: Effects, px: number
 }
 
 const MARK: EdgeMark = { x: 0, y: 0, angle: 0, danger: 0 };
+/** 내 공의 표시가 깜빡이는 위상과, 그 위상을 마지막으로 진행한 시각(밀리초)입니다. */
+let markPhase = 0;
+let markAt = 0;
 
 /**
  * 화면 밖으로 나간 공마다 가장자리에 그 공이 있는 쪽을 가리키는 화살표를 그립니다.
@@ -373,10 +376,14 @@ function drawEdgeMarks(
     const mine = pose.ball.id === me;
     const colors = ballColors(players, pose.ball.id);
     const size = mine ? MARK_MINE * (1 + 0.3 * MARK.danger) : MARK_OTHER;
+    if (mine) {
+      markPhase = blinkPhase(markPhase, time - markAt, MARK.danger);
+      markAt = time;
+    }
     ctx.save();
     ctx.translate(MARK.x, MARK.y);
     ctx.rotate(MARK.angle);
-    ctx.globalAlpha = mine ? 0.7 + 0.3 * Math.sin(time * (0.01 + 0.02 * MARK.danger)) : 0.85;
+    ctx.globalAlpha = mine ? 0.7 + 0.3 * Math.sin(markPhase) : 0.85;
     ctx.fillStyle = colors.fill;
     ctx.strokeStyle = mine ? TEXT : colors.edge;
     ctx.lineWidth = (mine ? 3 : 2) * px;

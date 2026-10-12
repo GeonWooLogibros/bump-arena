@@ -27,3 +27,11 @@ export function edgeMark(x: number, y: number, out: EdgeMark): boolean {
   out.danger = Math.min(1, past / boundsMargin);
   return true;
 }
+
+/**
+ * 내 공의 표시가 깜빡이는 위상(라디안)을 dtMs만큼 진행합니다. 탈락 경계에 가까울수록 빨리 깜빡입니다.
+ * 빠르기에 시간을 곱하지 않고 위상을 쌓으므로, 위험도가 바뀌어도 밝기가 튀지 않습니다.
+ */
+export function blinkPhase(phase: number, dtMs: number, danger: number): number {
+  return (phase + Math.max(0, Math.min(100, dtMs)) * (0.01 + 0.02 * danger)) % (Math.PI * 2);
+}
