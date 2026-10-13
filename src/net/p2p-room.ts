@@ -1,4 +1,5 @@
 import type { LobbyLike, NamedRoomLike, PeerLike } from './types';
+import { WIRE_VERSION } from './wire';
 
 /**
  * 브라우저끼리 직접 연결(WebRTC)해서 방 기능을 만듭니다. 별도 서버 없이 GitHub Pages 같은 정적 호스팅에서 동작합니다.
@@ -48,7 +49,7 @@ function isRecord(value: unknown): value is State {
 
 /** 방 이름으로 방장이 차지할 이름표를 만듭니다. 다른 서비스와 겹치지 않게 앞에 게임 이름을 붙입니다. */
 export function hostIdFor(name: string): string {
-  return `bonk-arena-${name}`;
+  return `bonk-arena-v${WIRE_VERSION}-${name}`;
 }
 
 export class P2PRoom implements NamedRoomLike {

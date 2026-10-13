@@ -8,6 +8,12 @@ import { TARGETS, TUNING, readMode } from '../game/modes';
 import type { ArrowShot } from '../physics/arrows';
 import type { BallState } from '../physics/world';
 
+/**
+ * 주고받는 값의 형식 버전입니다. 공이나 경기 상태의 형식, 또는 받은 값으로 계산하는 규칙을 바꾸면 올립니다.
+ * 버전이 다른 브라우저끼리는 같은 방 코드를 써도 서로 다른 방이 됩니다.
+ */
+export const WIRE_VERSION = 2;
+
 /** 공 하나가 한 번에 들고 다니는 화살의 최대 수입니다. */
 export const MAX_SHOTS = 8;
 

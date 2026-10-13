@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { P2PRoom, createP2PLobby, hostIdFor } from '../src/net/p2p-room';
+import { WIRE_VERSION } from '../src/net/wire';
 import { FakeNet } from './fake-peer-net';
 
 beforeEach(() => {
@@ -14,7 +15,8 @@ const names = (room: P2PRoom): unknown[] => room.peers().map((peer) => peer.pres
 
 describe('P2P 방', () => {
   it('방장 이름표는 방 이름 앞에 게임 이름을 붙입니다', () => {
-    expect(hostIdFor('rr-ab2cd')).toBe('bonk-arena-rr-ab2cd');
+    expect(hostIdFor('rr-ab2cd')).toBe(`bonk-arena-v${WIRE_VERSION}-rr-ab2cd`);
+    expect(WIRE_VERSION).toBeGreaterThanOrEqual(2);
   });
 
   it('먼저 들어온 사람이 방장이 되고, 다음 사람은 방장에게 연결해서 서로의 상태를 받습니다', async () => {
