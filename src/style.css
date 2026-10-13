@@ -24,6 +24,8 @@ body {
 
 #app > canvas {
   touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 .menus {
@@ -556,6 +558,7 @@ body {
   border: 2px solid rgba(127, 142, 168, 0.8);
   border-radius: 14px;
   padding: 0;
+  flex-shrink: 0;
   pointer-events: auto;
   touch-action: none;
   user-select: none;
@@ -616,4 +619,34 @@ body {
 
 .touch-special.held {
   background: rgba(59, 130, 246, 0.95);
+}
+
+/* 좁은 세로 화면에서는 방향 버튼과 동작 버튼이 한 줄에 들어가게 줄입니다. */
+@media (max-width: 400px) {
+  .touch {
+    padding-left: calc(8px + env(safe-area-inset-left));
+    padding-right: calc(8px + env(safe-area-inset-right));
+  }
+
+  .touch-pad {
+    grid-template-columns: repeat(3, 48px);
+    grid-template-rows: repeat(2, 48px);
+    gap: 5px;
+  }
+
+  .touch-actions {
+    gap: 8px;
+  }
+
+  .touch-heavy {
+    width: 60px;
+    height: 60px;
+    font-size: 15px;
+  }
+
+  .touch-special {
+    width: 76px;
+    height: 76px;
+    font-size: 17px;
+  }
 }
