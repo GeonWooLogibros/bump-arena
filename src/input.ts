@@ -13,9 +13,10 @@ const KEYS: Record<string, Key> = {
   ArrowDown: 'down',
   KeyS: 'down',
   Space: 'up',
-  KeyX: 'special',
-  ShiftLeft: 'special',
-  ShiftRight: 'special',
+  KeyX: 'heavy',
+  ShiftLeft: 'heavy',
+  ShiftRight: 'heavy',
+  KeyZ: 'special',
 };
 
 /** 터치 버튼입니다. 방향 버튼은 왼쪽 아래에 십자 모양으로 놓습니다. */
@@ -26,13 +27,13 @@ const PAD: readonly { key: Key; label: string; name: string }[] = [
   { key: 'right', label: '→', name: '오른쪽' },
 ];
 
-/** Cmd, Ctrl, Alt 키 자체의 code입니다. Shift는 특수 동작에 쓰므로 여기에 넣지 않습니다. */
+/** Cmd, Ctrl, Alt 키 자체의 code입니다. Shift는 무거워지기에 쓰므로 여기에 넣지 않습니다. */
 const MODIFIER = /^(Meta|OS|Control|Alt)(Left|Right)$/;
 
 /**
  * 지금 누르고 있는 키, 터치 버튼, 마우스를 기억합니다. 화면 요소를 쓰지 않습니다.
  * 겨누는 방향은 마지막으로 쓴 장치가 정합니다. 마우스를 움직이거나 누르면 마우스로 겨누고,
- * 키보드로 모으는 동안 방향키를 새로 누르면 키보드로 겨눕니다. 그 밖의 방향키는 이동이므로 겨누는 장치를 바꾸지 않습니다.
+ * 키보드의 특수 동작 키를 누르고 있는 동안 좌우 키를 새로 누르면 키보드로 겨눕니다. 그 밖의 좌우 키는 이동이므로 겨누는 장치를 바꾸지 않습니다.
  */
 export class InputState {
   /** 누르고 있는 키의 code입니다. */
@@ -43,6 +44,8 @@ export class InputState {
   private mouse: readonly [number, number] | null = null;
   /** 마우스 왼쪽 버튼을 누르고 있는지 여부. */
   private button = false;
+  /** 마우스 오른쪽 버튼을 누르고 있는지 여부. */
+  private side = false;
   /** 키보드로 겨누고 있는지 여부. */
   private keyAim = false;
 
@@ -59,7 +62,8 @@ export class InputState {
     }
     if (chord || !(code in KEYS)) return false;
     // 누르고 있는 키는 같은 keydown이 되풀이되어 들어오므로 새로 누른 키만 봅니다.
-    if (!this.codes.has(code) && KEYS[code] !== 'special' && this.keySpecial()) this.keyAim = true;
+    const turning = KEYS[code] === 'left' || KEYS[code] === 'right';
+    if (!this.codes.has(code) && turning && this.keySpecial()) this.keyAim = true;
     this.codes.add(code);
     return true;
   }
@@ -102,13 +106,22 @@ export class InputState {
     this.button = false;
   }
 
+  /** 마우스 오른쪽 버튼을 누르거나 뗐을 때 부릅니다. 누르는 동안 무거워지기입니다. */
+  mouseHeavy(down: boolean): void {
+    this.side = down;
+  }
+
   /** 마우스가 창을 벗어났을 때 부릅니다. 버튼을 누른 채로 벗어났으면 마지막 위치로 계속 겨눕니다. */
   mouseLeave(): void {
     if (!this.button) this.mouse = null;
   }
 
-  /** 마우스로 겨누고 있으면 그 위치(화면 px)이고, 키보드로 겨누고 있으면 null입니다. */
-  pointer(): readonly [number, number] | null {
+  /**
+   * 마우스로 겨누고 있으면 그 위치(화면 px)이고, 키보드로 겨누고 있으면 null입니다.
+   * pressed이면 왼쪽 버튼을 누르고 있을 때만 위치를 돌려줍니다. 키보드로 건 줄이 가만히 둔 마우스 쪽으로 가지 않게 하는 데 씁니다.
+   */
+  pointer(pressed = false): readonly [number, number] | null {
+    if (pressed && !this.button) return null;
     return this.keyAim ? null : this.mouse;
   }
 
@@ -117,10 +130,11 @@ export class InputState {
     this.codes.clear();
     this.pointers.clear();
     this.button = false;
+    this.side = false;
   }
 
   read(): Input {
-    const held = { left: false, right: false, up: false, down: false, special: this.button };
+    const held = { left: false, right: false, up: false, down: false, heavy: this.side, special: this.button };
     for (const code of this.codes) held[KEYS[code]] = true;
     for (const [key, set] of this.pointers) if (set.size > 0) held[key] = true;
     return held;
@@ -142,16 +156,16 @@ function typing(target: EventTarget | null): boolean {
   );
 }
 
-/** 키보드(방향키, WASD, 스페이스, X/Shift), 마우스, 터치 버튼의 입력을 읽습니다. */
+/** 키보드(방향키, WASD, 스페이스, X와 Shift, Z), 마우스, 터치 버튼의 입력을 읽습니다. */
 export function attachInput(root: HTMLElement): {
   read(): Input;
-  /** 마우스로 겨누고 있으면 그 위치(화면 px)이고, 아니면 null입니다. */
-  pointer(): readonly [number, number] | null;
+  /** 마우스로 겨누고 있으면 그 위치(화면 px)이고, 아니면 null입니다. pressed이면 왼쪽 버튼을 누르고 있을 때만 돌려줍니다. */
+  pointer(pressed?: boolean): readonly [number, number] | null;
   /** 터치 버튼을 쓰는 기기인지 여부. 그런 기기에서는 키보드 조작 안내를 보여 주지 않습니다. */
   readonly touch: boolean;
   /** 경기에서 공을 조작하고 있는지 알려 줍니다. 그동안에는 스페이스가 초점이 있는 버튼을 누르지 않습니다. */
   setPlaying(playing: boolean): void;
-  /** 터치 버튼을 보이거나 숨깁니다. special은 특수 동작 버튼에 쓸 글자입니다. 터치 화면이 아니면 항상 숨깁니다. */
+  /** 터치 버튼을 보이거나 숨깁니다. special은 특수 동작 버튼에 쓸 글자이고, 비어 있으면 그 버튼을 숨깁니다. 터치 화면이 아니면 항상 숨깁니다. */
   setTouchVisible(show: boolean, special?: string): void;
 } {
   const state = new InputState();
@@ -187,19 +201,30 @@ export function attachInput(root: HTMLElement): {
   window.addEventListener('pointermove', (event) => {
     if (event.pointerType !== 'mouse') return;
     state.mouseMove(event.clientX, event.clientY);
+    // 한 버튼을 누른 채로 다른 버튼을 누르면 pointerdown이 아니라 pointermove로 옵니다.
+    press(event);
     // 창 밖에서 버튼을 떼면 뗌을 알 수 없으므로, 움직일 때마다 버튼이 아직 눌려 있는지 봅니다.
     if ((event.buttons & 1) === 0) state.mouseUp();
+    if ((event.buttons & 2) === 0) state.mouseHeavy(false);
   });
-  window.addEventListener('pointerdown', (event) => {
-    // 메뉴의 버튼을 누르는 클릭은 특수 동작으로 치지 않도록, 경기 화면을 누른 것만 봅니다.
-    if (event.pointerType !== 'mouse' || event.button !== 0 || !(event.target instanceof HTMLCanvasElement)) return;
-    state.mouseDown(event.clientX, event.clientY);
+  /** 이 이벤트로 새로 눌린 마우스 버튼을 읽습니다. 왼쪽은 특수 동작이고 오른쪽은 무거워지기입니다. */
+  function press(event: PointerEvent): void {
+    // 메뉴의 버튼을 누르는 클릭은 조작으로 치지 않도록, 경기 화면을 누른 것만 봅니다.
+    if (!(event.target instanceof HTMLCanvasElement)) return;
+    if (event.button === 0 && (event.buttons & 1) !== 0) state.mouseDown(event.clientX, event.clientY);
+    else if (event.button === 2 && (event.buttons & 2) !== 0) state.mouseHeavy(true);
+    else return;
     // 누른 채로 끌어도 화면의 글자가 골라지지 않게 합니다.
     if (playing) event.preventDefault();
+  }
+  window.addEventListener('pointerdown', (event) => {
+    if (event.pointerType === 'mouse') press(event);
   });
   for (const type of ['pointerup', 'pointercancel'] as const) {
     window.addEventListener(type, (event) => {
-      if (event.pointerType === 'mouse' && event.button === 0) state.mouseUp();
+      if (event.pointerType !== 'mouse') return;
+      if (event.button === 0) state.mouseUp();
+      if (event.button === 2) state.mouseHeavy(false);
     });
   }
   document.documentElement.addEventListener('mouseleave', () => state.mouseLeave());
@@ -237,13 +262,17 @@ export function attachInput(root: HTMLElement): {
   const pad = document.createElement('div');
   pad.className = 'touch-pad';
   for (const { key, label, name } of PAD) pad.append(touchButton(key, label, `touch-btn touch-${key}`, name));
+  const actions = document.createElement('div');
+  actions.className = 'touch-actions';
+  const heavy = touchButton('heavy', '무겁게', 'touch-btn touch-heavy', '무거워지기');
   const special = touchButton('special', '', 'touch-btn touch-special', '특수 동작');
-  layer.append(pad, special);
+  actions.append(heavy, special);
+  layer.append(pad, actions);
   root.append(layer);
 
   return {
     read: () => state.read(),
-    pointer: () => state.pointer(),
+    pointer: (pressed) => state.pointer(pressed),
     touch: coarse,
     setPlaying(value) {
       playing = value;
@@ -251,6 +280,12 @@ export function attachInput(root: HTMLElement): {
     setTouchVisible(show, label = '') {
       const hidden = !(show && coarse);
       if (special.textContent !== label) special.textContent = label;
+      if (special.hidden !== (label === '')) {
+        special.hidden = label === '';
+        // 숨긴 버튼은 뗌을 알려 주지 않으므로 누르고 있던 손가락을 지웁니다.
+        state.resetTouch();
+        release();
+      }
       if (layer.hidden === hidden) return;
       layer.hidden = hidden;
       if (hidden) {

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { MAPS } from '../src/game/maps';
+import { TUNING } from '../src/game/modes';
 import type { Mode } from '../src/game/modes';
 import { NO_INPUT, World } from '../src/physics/world';
 import type { Input, WorldEvent } from '../src/physics/world';
@@ -130,11 +131,11 @@ describe('화살 쏘기', () => {
   it('모으는 동안 aim이 방향과 정도를 알려 준다', () => {
     const world = standing();
     expect(world.aim('a')).toBeNull();
-    world.setInput('a', press('special', 'up'));
+    world.setInput('a', press('special'));
     run(world, 30);
     const aim = world.aim('a')!;
-    expect(aim.dx).toBeCloseTo(0);
-    expect(aim.dy).toBeCloseTo(-1);
+    expect(aim.dx).toBeCloseTo(Math.SQRT1_2);
+    expect(aim.dy).toBeCloseTo(-Math.SQRT1_2);
     expect(aim.charge).toBeCloseTo(0.5, 1);
     expect(world.balls()[0].aim).toEqual(aim);
   });
@@ -148,17 +149,19 @@ describe('화살 쏘기', () => {
     expect(Math.hypot(shot.vx, shot.vy)).toBeGreaterThan(29);
   });
 
-  it('위를 누르면 위로, 방향키가 없으면 마지막 좌우 방향으로 쏜다', () => {
+  it('좌우 키를 누르지 않으면 마지막에 움직이던 쪽의 비스듬한 위로 쏜다', () => {
     const world = standing();
-    chargeAndRelease(world, 'a', 30, 'up');
-    const up = world.shots('a')[0];
-    expect(up.vy).toBeLessThan(0);
-    expect(up.vx).toBeCloseTo(0);
+    chargeAndRelease(world, 'a', 30);
+    const right = world.shots('a')[0];
+    expect(right.vx).toBeGreaterThan(0);
+    expect(right.vy).toBeCloseTo(-right.vx, 5);
     const other = standing();
     other.setInput('a', press('left'));
     run(other, 2);
     chargeAndRelease(other, 'a', 30);
-    expect(other.shots('a')[0].vx).toBeLessThan(0);
+    const left = other.shots('a')[0];
+    expect(left.vx).toBeLessThan(0);
+    expect(left.vy).toBeCloseTo(left.vx, 5);
   });
 
   it('쏜 뒤 1초는 모을 수 없다', () => {
@@ -167,6 +170,64 @@ describe('화살 쏘기', () => {
     expect(ofType(chargeAndRelease(world, 'a', 30), 'shoot')).toHaveLength(0);
     run(world, 70);
     expect(ofType(chargeAndRelease(world, 'a', 30), 'shoot')).toHaveLength(1);
+  });
+});
+
+describe('좌우 키로 겨누기', () => {
+  /** 오른쪽의 비스듬한 위에서 시계 방향으로 turn만큼 돈 방향입니다. */
+  const turned = (turn: number) => [Math.cos(-Math.PI / 4 + turn), Math.sin(-Math.PI / 4 + turn)] as const;
+
+  it('오른쪽 키는 시계 방향으로, 왼쪽 키는 반대로 arrowTurnSpeed만큼 돌린다', () => {
+    const world = standing();
+    world.setInput('a', press('special', 'right'));
+    run(world, 12);
+    const [dx, dy] = turned(TUNING.arrowTurnSpeed * 0.2);
+    expect(world.aim('a')!.dx).toBeCloseTo(dx, 5);
+    expect(world.aim('a')!.dy).toBeCloseTo(dy, 5);
+    world.setInput('a', press('special', 'left'));
+    run(world, 24);
+    const [bx, by] = turned(-TUNING.arrowTurnSpeed * 0.2);
+    expect(world.aim('a')!.dx).toBeCloseTo(bx, 5);
+    expect(world.aim('a')!.dy).toBeCloseTo(by, 5);
+  });
+
+  it('좌우 키를 떼거나 둘 다 누르면 방향이 그대로이고, 놓으면 그 방향으로 쏜다', () => {
+    const world = standing();
+    world.setInput('a', press('special', 'right'));
+    run(world, 12);
+    const { dx, dy } = world.aim('a')!;
+    world.setInput('a', press('special'));
+    run(world, 6);
+    world.setInput('a', press('special', 'left', 'right'));
+    run(world, 6);
+    expect(world.aim('a')).toMatchObject({ dx, dy });
+    world.setInput('a', NO_INPUT);
+    run(world, 1);
+    const shot = world.shots('a')[0];
+    expect(shot.vx / Math.hypot(shot.vx, shot.vy)).toBeCloseTo(dx, 5);
+    expect(shot.vy / Math.hypot(shot.vx, shot.vy)).toBeCloseTo(dy, 5);
+  });
+
+  it('모으는 동안 돌린 좌우 키는 마지막에 움직이던 쪽을 바꾸지 않고, 다음에는 다시 비스듬한 위에서 시작한다', () => {
+    const world = standing();
+    world.setInput('a', press('special'));
+    run(world, 1);
+    chargeAndRelease(world, 'a', 30, 'left');
+    expect(world.shots('a')).toHaveLength(1);
+    run(world, 70);
+    world.setInput('a', press('special'));
+    run(world, 1);
+    expect(world.aim('a')!.dx).toBeCloseTo(Math.SQRT1_2);
+    expect(world.aim('a')!.dy).toBeCloseTo(-Math.SQRT1_2);
+  });
+
+  it('위아래 키로는 방향이 바뀌지 않는다', () => {
+    const world = new World(FLAT, 'arrows');
+    world.addBall('a', 16, 5, true);
+    world.setInput('a', press('special', 'up', 'down'));
+    run(world, 10);
+    expect(world.aim('a')!.dx).toBeCloseTo(Math.SQRT1_2);
+    expect(world.aim('a')!.dy).toBeCloseTo(-Math.SQRT1_2);
   });
 });
 
@@ -187,11 +248,11 @@ describe('마우스로 겨누기', () => {
     expect(shot.vy / Math.hypot(shot.vx, shot.vy)).toBeCloseTo(-0.8, 1);
   });
 
-  it('겨누는 위치가 있으면 방향키는 겨누는 데 쓰지 않는다', () => {
+  it('겨누는 위치가 있으면 좌우 키는 겨누는 데 쓰지 않는다', () => {
     const world = standing();
     const { x, y } = world.state('a')!;
     world.setAimPoint('a', [x - 5, y]);
-    world.setInput('a', press('special', 'right', 'up'));
+    world.setInput('a', press('special', 'right'));
     run(world, 10);
     const aim = world.aim('a')!;
     expect(aim.dx).toBeCloseTo(-1, 2);
@@ -209,34 +270,63 @@ describe('마우스로 겨누기', () => {
     expect(world.aim('a')!.dy).toBeCloseTo(-1, 2);
   });
 
-  it('위치를 지우면 다시 방향키로 겨눈다', () => {
+  it('모으는 동안 위치를 지우면 마우스로 겨누던 방향에서 이어서 좌우 키로 돌린다', () => {
     const world = standing();
     const { x, y } = world.state('a')!;
     world.setAimPoint('a', [x - 5, y]);
-    world.setAimPoint('a', null);
-    world.setInput('a', press('special', 'up'));
+    world.setInput('a', press('special'));
     run(world, 10);
-    expect(world.aim('a')!.dy).toBeCloseTo(-1, 2);
+    world.setAimPoint('a', null);
+    world.setInput('a', press('special', 'right'));
+    run(world, 6);
+    // 왼쪽을 겨누다가 시계 방향으로 돌리면 왼쪽 위를 향합니다.
+    const turn = Math.PI + TUNING.arrowTurnSpeed * 0.1;
+    expect(world.aim('a')!.dx).toBeCloseTo(Math.cos(turn), 5);
+    expect(world.aim('a')!.dy).toBeCloseTo(Math.sin(turn), 5);
   });
 
-  it('위치가 공의 중심과 겹치면 마지막 좌우 방향으로 겨눈다', () => {
+  it('위치가 공의 중심과 겹치면 겨누던 방향을 그대로 둔다', () => {
     const world = standing();
     const { x, y } = world.state('a')!;
     world.setAimPoint('a', [x, y]);
     world.setInput('a', press('special'));
     run(world, 10);
-    expect(world.aim('a')).toMatchObject({ dx: 1, dy: 0 });
+    expect(world.aim('a')!.dx).toBeCloseTo(Math.SQRT1_2);
+    expect(world.aim('a')!.dy).toBeCloseTo(-Math.SQRT1_2);
   });
 });
 
 describe('화살 모드의 이동', () => {
-  it('모으는 동안에는 방향키를 눌러도 움직이지 않는다', () => {
+  it('모으는 동안에는 좌우 키를 눌러도 움직이지 않는다', () => {
     const world = standing();
     const x = world.state('a')!.x;
     world.setInput('a', press('special', 'right'));
     run(world, 30);
     expect(world.aim('a')).not.toBeNull();
     expect(Math.abs(world.state('a')!.x - x)).toBeLessThan(0.01);
+  });
+
+  it('모으는 동안에도 위 키로 뛴다', () => {
+    const world = standing();
+    const { x, y } = world.state('a')!;
+    world.setInput('a', press('special', 'up', 'right'));
+    const events = run(world, 15);
+    expect(ofType(events, 'jump')).toHaveLength(1);
+    expect(world.aim('a')).not.toBeNull();
+    expect(world.state('a')!.y).toBeLessThan(y - 0.5);
+    expect(Math.abs(world.state('a')!.x - x)).toBeLessThan(0.01);
+  });
+
+  it('모으는 동안에도 아래 키로 아래로 힘을 준다', () => {
+    const fall = (down: boolean): number => {
+      const world = new World(FLAT, 'arrows');
+      world.addBall('a', 16, 3, true);
+      world.setInput('a', down ? press('special', 'down') : press('special'));
+      run(world, 20);
+      expect(world.aim('a')).not.toBeNull();
+      return world.state('a')!.y;
+    };
+    expect(fall(true)).toBeGreaterThan(fall(false) + 0.5);
   });
 
   it('쏜 뒤 모을 수 없는 1초 동안에는 special을 누르고 있어도 움직인다', () => {
@@ -270,7 +360,8 @@ describe('화살 명중과 꽂힘', () => {
       ['a', 10],
       ['b', 13],
     ]);
-    world.setInput('a', press('special', 'right'));
+    world.setAimPoint('a', [13, world.state('a')!.y]);
+    world.setInput('a', press('special'));
     run(world, 30);
     world.setInput('a', NO_INPUT);
     const events = run(world, 20);
@@ -286,7 +377,8 @@ describe('화살 명중과 꽂힘', () => {
     world.addBall('a', 10, 11.9, true);
     world.addBall('b', 13, 11.9, false);
     run(world, 120);
-    world.setInput('a', press('special', 'right'));
+    world.setAimPoint('a', [13, world.state('a')!.y]);
+    world.setInput('a', press('special'));
     run(world, 30);
     world.setInput('a', NO_INPUT);
     const events = run(world, 20);
@@ -297,7 +389,8 @@ describe('화살 명중과 꽂힘', () => {
   it('꽂힌 화살은 맞히지 못하고 3초 뒤 사라진다', () => {
     const world = new World(FLAT, 'arrows');
     world.addBall('a', 10, 5, true);
-    world.setInput('a', press('special', 'down'));
+    world.setAimPoint('a', [10, 30]);
+    world.setInput('a', press('special'));
     run(world, 30);
     world.setInput('a', NO_INPUT);
     const events = run(world, 40);
@@ -314,7 +407,8 @@ describe('화살 명중과 꽂힘', () => {
 describe('발판 안에서 쏘기', () => {
   it('발판 위에서 아래로 쏘면 표면에 바로 꽂힌다', () => {
     const world = standing();
-    const events = chargeAndRelease(world, 'a', 30, 'down');
+    world.setAimPoint('a', [16, 30]);
+    const events = chargeAndRelease(world, 'a', 30);
     expect(ofType(events, 'stick')).toHaveLength(1);
     const [arrow] = world.arrows();
     expect(arrow.stuck).toBe(true);
@@ -326,7 +420,8 @@ describe('발판 안에서 쏘기', () => {
 
   it('바로 꽂힌 화살의 발사 정보는 표면에서 0.05m 앞이어서, 반올림해 받은 쪽에서도 같은 곳에 꽂힌다', () => {
     const world = standing();
-    chargeAndRelease(world, 'a', 30, 'down');
+    world.setAimPoint('a', [16, 30]);
+    chargeAndRelease(world, 'a', 30);
     const [arrow] = world.arrows();
     const [shot] = world.shots('a');
     expect(arrow.stuck).toBe(true);
@@ -461,7 +556,7 @@ describe('입력 복사', () => {
     world.setInput('a', input);
     run(world, 1);
     input.right = false;
-    input.special = true;
+    input.heavy = true;
     run(world, 1);
     expect(world.balls()[0].heavy).toBe(false);
   });

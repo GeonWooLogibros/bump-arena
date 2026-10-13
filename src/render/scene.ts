@@ -71,6 +71,13 @@ const SHAKE_REACH = 0.14;
 const HEAVY_SHADE = 'rgba(10, 12, 20, 0.4)';
 /** 무거워진 공의 둘레에 그리는 고리가 공에서 떨어진 거리(미터)입니다. */
 const HEAVY_RING = 0.15;
+/** 갈고리 충전량을 그리는 고리가 공에서 떨어진 거리(미터)와 색입니다. 잠긴 동안에는 빨간색입니다. */
+const GAUGE_RING = 0.26;
+const GAUGE = '#74c0fc';
+const GAUGE_LOCKED = '#ff6b6b';
+const GAUGE_TRACK = 'rgba(255, 255, 255, 0.22)';
+/** 다른 공의 충전량은 이 불투명도로 옅게 그립니다. */
+const GAUGE_OTHER_ALPHA = 0.55;
 /** 공이 이 속력(m/s)부터 잔상을 남기고, TRAIL_FULL에서 가장 진합니다. */
 const TRAIL_FROM = 11;
 const TRAIL_FULL = 22;
@@ -234,8 +241,10 @@ function drawTrail(ctx: CanvasRenderingContext2D, pose: BallPose, colors: BallCo
 
 function drawBall(ctx: CanvasRenderingContext2D, pose: BallPose, colors: BallColors, px: number): void {
   const r = TUNING.radius;
-  const { heavy } = pose.ball;
-  const edge = (heavy ? 5 : 2) * px;
+  // 무거워지기의 효과가 줄어든 만큼 무거운 표시도 옅어져서, 다 줄어들면 평소 모습과 같아집니다.
+  const weight = pose.ball.heavy ? Math.max(0, Math.min(1, pose.ball.heft)) : 0;
+  const heavy = weight > 0;
+  const edge = (2 + 3 * weight) * px;
   ctx.save();
   // 눌린 만큼 부딪친 쪽으로 다가가서, 닿은 면이 떨어져 보이지 않게 합니다.
   ctx.translate(pose.x + pose.nx * r * pose.squash, pose.y + pose.ny * r * pose.squash);
@@ -252,25 +261,28 @@ function drawBall(ctx: CanvasRenderingContext2D, pose: BallPose, colors: BallCol
   ctx.beginPath();
   ctx.arc(0, 0, r - edge / 2, 0, TAU);
   ctx.fill();
+  const alpha = ctx.globalAlpha;
   if (heavy) {
+    ctx.globalAlpha = alpha * weight;
     ctx.fillStyle = HEAVY_SHADE;
     ctx.fill();
+    ctx.globalAlpha = alpha;
   }
   ctx.stroke();
-  ctx.lineWidth = 2 * px;
-  const core = heavy ? r * 0.3 : 0;
+  const core = r * 0.3 * weight;
   if (heavy) {
     ctx.fillStyle = colors.fill;
     ctx.beginPath();
     ctx.arc(0, 0, core, 0, TAU);
     ctx.fill();
-    ctx.globalAlpha *= 0.65;
+    ctx.globalAlpha = alpha * 0.65 * weight;
     ctx.lineWidth = 3 * px;
     ctx.beginPath();
     ctx.arc(0, 0, r + HEAVY_RING, 0, TAU);
     ctx.stroke();
-    ctx.lineWidth = 2 * px;
+    ctx.globalAlpha = alpha;
   }
+  ctx.lineWidth = 2 * px;
   // 굴러가는 방향을 알 수 있는 반지름 선입니다.
   const cos = Math.cos(pose.angle);
   const sin = Math.sin(pose.angle);
@@ -279,6 +291,29 @@ function drawBall(ctx: CanvasRenderingContext2D, pose: BallPose, colors: BallCol
   ctx.lineTo(cos * (r - edge), sin * (r - edge));
   ctx.stroke();
   ctx.restore();
+}
+
+/**
+ * 갈고리 충전량을 공 둘레에 그립니다. 남은 만큼이 위에서부터 시계 방향으로 이어진 호이고, 잠겨 있으면 둘레 전체가 빨간색입니다.
+ * 내 공의 것은 굵고 또렷하게, 다른 공의 것은 가늘고 옅게 그립니다.
+ */
+function drawGauge(ctx: CanvasRenderingContext2D, pose: BallPose, mine: boolean, px: number): void {
+  const { fuel, locked } = pose.ball;
+  const radius = TUNING.radius + GAUGE_RING;
+  ctx.globalAlpha = mine ? 1 : GAUGE_OTHER_ALPHA;
+  ctx.lineCap = 'butt';
+  ctx.lineWidth = (mine ? 4 : 2.5) * px;
+  ctx.strokeStyle = locked ? GAUGE_LOCKED : GAUGE_TRACK;
+  ctx.beginPath();
+  ctx.arc(pose.x, pose.y, radius, 0, TAU);
+  ctx.stroke();
+  if (!locked && fuel > 0) {
+    ctx.strokeStyle = GAUGE;
+    ctx.beginPath();
+    ctx.arc(pose.x, pose.y, radius, -Math.PI / 2, -Math.PI / 2 + TAU * Math.min(1, fuel));
+    ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
 }
 
 /** 공에서 (x, y)를 향하는 단위 벡터입니다. 공의 중심과 겹치면 null입니다. */
@@ -434,7 +469,19 @@ function drawEdgeMarks(
   }
 }
 
-const BACKDROP_BALL: BallView = { id: '', x: 0, y: 0, angle: 0, alive: true, heavy: false, rope: null, aim: null };
+const BACKDROP_BALL: BallView = {
+  id: '',
+  x: 0,
+  y: 0,
+  angle: 0,
+  alive: true,
+  heavy: false,
+  heft: 1,
+  fuel: 1,
+  locked: false,
+  rope: null,
+  aim: null,
+};
 const BACKDROP: BallPose = { ball: BACKDROP_BALL, x: 0, y: 0, angle: 0, ropeX: 0, ropeY: 0, vx: 0, vy: 0, nx: 0, ny: 0, squash: 0 };
 
 /** 경기가 없을 때 메뉴 뒤에 보이는 그림입니다. 평지 위에서 공 여섯 개가 통통 뜁니다. */
@@ -624,6 +671,10 @@ export function drawScene(
   }
   for (const pose of poses.balls) if (pose.ball.alive) drawTrail(ctx, pose, ballColors(s.players, pose.ball.id));
   for (const pose of poses.balls) if (pose.ball.alive) drawBall(ctx, pose, ballColors(s.players, pose.ball.id), px);
+  const grapple = view.match.settings.mode === 'grapple';
+  if (grapple) {
+    for (const pose of poses.balls) if (pose.ball.alive) drawGauge(ctx, pose, pose.ball.id === view.me, px);
+  }
   const arrows = view.match.settings.mode === 'arrows' && view.match.phase === 'play';
   for (const pose of poses.balls) {
     if (!pose.ball.alive) continue;
@@ -641,7 +692,8 @@ export function drawScene(
     if (!pose.ball.alive) continue;
     const row = rows.find((r) => r.id === pose.ball.id);
     const x = offsetX + (pose.x + shakeX) * scale;
-    const top = offsetY + (pose.y + shakeY - TUNING.radius) * scale;
+    // 갈고리에서는 공 둘레의 충전량 고리 위에 이름을 씁니다.
+    const top = offsetY + (pose.y + shakeY - TUNING.radius - (grapple ? GAUGE_RING : 0)) * scale;
     drawName(ctx, x, top, row?.name ?? GONE_NAME, pose.ball.id === view.me, u);
   }
 

@@ -76,9 +76,15 @@ function clearPath(map: GameMap, me: Spot, ux: number, uy: number, speed: number
   return true;
 }
 
+/** 단위 벡터 from을 to로 돌리는 각도(라디안)입니다. 양수이면 시계 방향(오른쪽 키)입니다. */
+export function turnTo(from: readonly [number, number], to: readonly [number, number]): number {
+  return Math.atan2(from[0] * to[1] - from[1] * to[0], from[0] * to[0] + from[1] * to[1]);
+}
+
 /**
- * 상대를 맞힐 가능성이 있는 방향(8방향 가운데)과 모을 시간을 고릅니다. 없으면 null입니다.
+ * 상대를 맞힐 가능성이 있는 방향(가로, 비스듬한 위아래, 바로 위아래 가운데)과 모을 시간을 고릅니다. 없으면 null입니다.
  * prefer에 가까운 시간을 먼저 살피고, 발판에 막히는 길은 버립니다. tolerance는 화살이 상대 중심을 지나쳐도 되는 거리(m)입니다.
+ * turning을 주면 지금 겨누는 방향(aim)에서 좌우 키로 돌리는 시간을 셈에 넣어, 지금까지 모은 시간(charge)에 그 시간을 더한 것보다 일찍 놓아야 하는 방향은 버립니다.
  */
 export function aimShot(
   map: GameMap,
@@ -87,7 +93,8 @@ export function aimShot(
   prefer: number,
   from: number,
   tolerance = AIM_TOLERANCE,
-): { keys: readonly [number, number]; release: number } | null {
+  turning: { aim: readonly [number, number]; charge: number } | null = null,
+): { dir: readonly [number, number]; release: number } | null {
   const rx = target.x - me.x;
   const ry = target.y - me.y;
   const side = rx >= 0 ? 1 : -1;
@@ -104,13 +111,17 @@ export function aimShot(
   for (const release of charges) {
     if (release < from) continue;
     const speed = arrowSpeed(release);
-    for (const keys of dirs) {
-      const len = Math.hypot(keys[0], keys[1]);
-      const ux = keys[0] / len;
-      const uy = keys[1] / len;
+    for (const [kx, ky] of dirs) {
+      const len = Math.hypot(kx, ky);
+      const ux = kx / len;
+      const uy = ky / len;
+      if (turning) {
+        const turn = Math.abs(turnTo(turning.aim, [ux, uy])) / TUNING.arrowTurnSpeed;
+        if (release < turning.charge + turn) continue;
+      }
       if (!reaches(rx, ry, ux, uy, speed, tolerance)) continue;
       const { miss, time } = closest(rx, ry, ux, uy, speed);
-      if (miss <= tolerance && clearPath(map, me, ux, uy, speed, time)) return { keys, release };
+      if (miss <= tolerance && clearPath(map, me, ux, uy, speed, time)) return { dir: [ux, uy], release };
     }
   }
   return null;

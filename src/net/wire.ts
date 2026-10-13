@@ -4,7 +4,7 @@ import { cleanName, COLORS } from '../game/lobby';
 import { MAPS, RANDOM_MAP } from '../game/maps';
 import { DEFAULT_SETTINGS } from '../game/round';
 import type { Match, Phase } from '../game/round';
-import { TARGETS, readMode } from '../game/modes';
+import { TARGETS, TUNING, readMode } from '../game/modes';
 import type { ArrowShot } from '../physics/arrows';
 import type { BallState } from '../physics/world';
 
@@ -15,7 +15,7 @@ const PHASES: readonly Phase[] = ['lobby', 'countdown', 'play', 'roundEnd', 'mat
 const ID_LIMIT = 64;
 /** 객체의 키로 쓰면 안 되는 id입니다. */
 const RESERVED_IDS = ['__proto__', 'constructor', 'prototype'];
-const INPUT_MAX = 31;
+const INPUT_MAX = 63;
 const ROSTER_LIMIT = 12;
 const BOT_LIMIT = 5;
 const MAX_ROUND = 1_000_000;
@@ -33,6 +33,12 @@ export interface BallWire {
   /** dx, dy, charge */
   am: readonly [number, number, number] | null;
   ar: ArrowShot[];
+  /** 무거워지기의 남은 효과(0~1)입니다. */
+  h: number;
+  /** 갈고리 충전량(0~1)입니다. */
+  g: number;
+  /** 줄을 쓸 수 없는 남은 시간(초)입니다. 0이면 잠겨 있지 않습니다. */
+  l: number;
 }
 
 /** 방장이 올리는 경기 상태입니다. bs는 AI들의 공이고, t는 방장의 움직이는 발판이 놓인 시간(밀리초)입니다. */
@@ -87,6 +93,11 @@ function ranged(value: unknown, min: number, max: number, fallback: number): num
   return typeof value === 'number' && Number.isFinite(value) ? Math.max(min, Math.min(max, Math.floor(value))) : fallback;
 }
 
+/** 0 이상 max 이하의 숫자로 만듭니다. 유한한 숫자가 아니면 fallback입니다. */
+function within(value: unknown, max: number, fallback: number): number {
+  return typeof value === 'number' && Number.isFinite(value) ? Math.max(0, Math.min(max, value)) : fallback;
+}
+
 function validId(id: unknown): id is string {
   return typeof id === 'string' && id.length > 0 && id.length <= ID_LIMIT && !RESERVED_IDS.includes(id);
 }
@@ -127,10 +138,16 @@ export function encodeBall(ball: BallWire): Record<string, unknown> {
     rp: ball.rp ? ball.rp.map(round2) : null,
     am: ball.am ? ball.am.map(round2) : null,
     ar: ball.ar.slice(0, MAX_SHOTS).map((s) => [s.id, s.x, s.y, s.vx, s.vy, s.age].map(round2)),
+    h: round2(ball.h),
+    g: round2(ball.g),
+    l: round2(ball.l),
   };
 }
 
-/** 받은 값에서 공을 읽습니다. 좌표나 속도가 유한한 숫자가 아니면 공 전체를 null로 봅니다. */
+/**
+ * 받은 값에서 공을 읽습니다. 좌표나 속도가 유한한 숫자가 아니면 공 전체를 null로 봅니다.
+ * 남은 효과와 충전량이 없거나 숫자가 아니면 가득 찬 것으로, 잠긴 시간이 없거나 숫자가 아니면 잠기지 않은 것으로 봅니다.
+ */
 export function decodeBall(value: unknown): BallWire | null {
   if (!isDict(value) || !Array.isArray(value.b) || value.b.length !== 5) return null;
   const [x, y, vx, vy, av] = value.b;
@@ -150,6 +167,9 @@ export function decodeBall(value: unknown): BallWire | null {
     rp: rp ? [rp[0], rp[1]] : null,
     am: am ? [am[0], am[1], am[2]] : null,
     ar: arrows.map(decodeArrow).filter((s): s is ArrowShot => s !== null),
+    h: within(value.h, 1, 1),
+    g: within(value.g, 1, 1),
+    l: within(value.l, TUNING.ropeLockTime, 0),
   };
 }
 

@@ -14,7 +14,7 @@ export const WARP_DISTANCE = 1;
 
 /** 세기 1인 충돌에 공이 눌리는 비율입니다. */
 export const SQUASH_MAX = 0.22;
-/** 무거워진 공은 눌리는 정도에 이 값을 곱합니다. 단단해 보이게 합니다. */
+/** 무거워진 공은 눌리는 정도에 이 값을 곱합니다. 단단해 보이게 합니다. 무거워지기의 효과가 줄어든 만큼 1에 가까워집니다. */
 export const SQUASH_HEAVY = 0.4;
 /** 눌린 공이 제 모양으로 돌아오기까지의 시간(초)입니다. */
 export const SQUASH_TIME = 0.28;
@@ -280,7 +280,7 @@ export class Poses {
       const dent = this.dents.get(ball.id);
       pose.nx = dent?.nx ?? 0;
       pose.ny = dent?.ny ?? 0;
-      pose.squash = dent ? squashAt(dent.amount, dent.age) * (ball.heavy ? SQUASH_HEAVY : 1) : 0;
+      pose.squash = dent ? squashAt(dent.amount, dent.age) * (ball.heavy ? mix(1, SQUASH_HEAVY, ball.heft) : 1) : 0;
     }
 
     this.arrows.length = view.arrows.length;

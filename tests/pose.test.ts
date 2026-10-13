@@ -29,7 +29,7 @@ import {
 import type { SessionView } from '../src/session';
 
 function ballAt(id: string, x: number, y: number, patch: Partial<BallView> = {}): BallView {
-  return { id, x, y, angle: 0, alive: true, heavy: false, rope: null, aim: null, ...patch };
+  return { id, x, y, angle: 0, alive: true, heavy: false, heft: 1, fuel: 1, locked: false, rope: null, aim: null, ...patch };
 }
 
 function arrowAt(id: number, x: number, y: number): ArrowView {
@@ -205,6 +205,15 @@ describe('찌그러짐', () => {
     poses.squash('a', 0, 1, 1);
     poses.update(view, 0);
     expect(poses.balls[0].squash).toBeCloseTo(SQUASH_MAX * SQUASH_HEAVY);
+  });
+
+  it('무거워지기의 효과가 다 줄어든 공은 평소만큼 눌린다', () => {
+    const poses = new Poses();
+    const view = viewOf([ballAt('a', 1, 1, { heavy: true, heft: 0 })], null, 0);
+    poses.update(view, 0);
+    poses.squash('a', 0, 1, 1);
+    poses.update(view, 0);
+    expect(poses.balls[0].squash).toBeCloseTo(SQUASH_MAX);
   });
 
   it('느릴 때는 늘어나지 않고 빠를수록 한도까지 늘어난다', () => {

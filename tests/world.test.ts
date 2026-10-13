@@ -26,10 +26,10 @@ function settled(mode: Mode = 'classic'): World {
   return world;
 }
 
-function travel(special: boolean): number {
+function travel(heavy: boolean): number {
   const world = settled();
   const x0 = world.state('a')!.x;
-  world.setInput('a', special ? press('right', 'special') : press('right'));
+  world.setInput('a', heavy ? press('right', 'heavy') : press('right'));
   run(world, 60);
   return world.state('a')!.x - x0;
 }
@@ -39,6 +39,9 @@ describe('입력 묶음', () => {
     const input = press('left', 'down', 'special');
     expect(packInput(input)).toBe(1 + 8 + 16);
     expect(unpackInput(packInput(input))).toEqual(input);
+    const heavy = press('right', 'up', 'heavy');
+    expect(packInput(heavy)).toBe(2 + 4 + 32);
+    expect(unpackInput(packInput(heavy))).toEqual(heavy);
     expect(unpackInput('x')).toEqual(NO_INPUT);
   });
 });
@@ -78,28 +81,17 @@ describe('공의 이동', () => {
 });
 
 describe('무거워지기', () => {
-  it('클래식에서 무거운 공은 덜 움직인다', () => {
+  it('무거운 공은 덜 움직인다', () => {
     const ratio = travel(true) / travel(false);
     expect(ratio).toBeGreaterThanOrEqual(0.25);
     expect(ratio).toBeLessThanOrEqual(0.45);
-  });
-
-  it('클래식에서만 heavy가 켜진다', () => {
-    const classic = settled('classic');
-    classic.setInput('a', press('special'));
-    classic.step();
-    expect(classic.balls()[0].heavy).toBe(true);
-    const grapple = settled('grapple');
-    grapple.setInput('a', press('special'));
-    grapple.step();
-    expect(grapple.balls()[0].heavy).toBe(false);
   });
 
   it('같은 속력으로 부딪치면 보통 공의 속도 변화가 더 크다', () => {
     const world = new World(FLAT, 'classic');
     world.addBall('heavy', 14, 5, true);
     world.addBall('light', 18, 5, true);
-    world.setInput('heavy', press('special'));
+    world.setInput('heavy', press('heavy'));
     world.step();
     const body = (id: string) => (world as unknown as { entries: Map<string, { body: Body }> }).entries.get(id)!.body;
     body('heavy').setLinearVelocity({ x: 8, y: 0 });
@@ -136,7 +128,7 @@ describe('경계', () => {
 });
 
 describe('화살 모드', () => {
-  it('special을 누르면 방향 입력으로 움직이지 않는다', () => {
+  it('special을 누르면 좌우 입력으로 움직이지 않는다', () => {
     const world = settled('arrows');
     world.setInput('a', press('special', 'right'));
     run(world, 30);

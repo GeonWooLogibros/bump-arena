@@ -292,7 +292,8 @@ describe('움직이는 발판과 화살', () => {
   }
 
   function shoot(world: World): void {
-    world.setInput('a', press('special', 'right'));
+    world.setAimPoint('a', [30, world.state('a')!.y]);
+    world.setInput('a', press('special'));
     run(world, 60);
     world.setInput('a', NO_INPUT);
     run(world, 1);

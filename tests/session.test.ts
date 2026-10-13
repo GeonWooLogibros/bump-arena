@@ -278,9 +278,12 @@ describe('연습 경기', () => {
     const sent = decodeBall(encodeBall(session.mine().ball!))!;
     expect(sent.am![0]).toBeCloseTo(aim.dx, 2);
     expect(sent.am![1]).toBeCloseTo(aim.dy, 2);
+    // 마우스로 겨누지 않게 되면 그 방향에서 이어서 좌우 키로 돌립니다. 왼쪽 위에서 시계 방향으로 돌면 위쪽에 가까워집니다.
     session.update(FRAME_MS, press('special', 'right'), SOLO);
     session.update(FRAME_MS, press('special', 'right'), SOLO);
-    expect(ball(session, 'me').aim).toMatchObject({ dx: 1, dy: 0 });
+    const turned = ball(session, 'me').aim!;
+    expect(turned.dx).toBeGreaterThan(aim.dx + 0.05);
+    expect(turned.dy).toBeLessThan(aim.dy);
   });
 
   it('한 프레임이 0.5초보다 길면 단계도 공도 그대로다', () => {
@@ -1102,5 +1105,64 @@ describe('이어 그리기에 쓰는 직전 모습', () => {
     tick(session, 100);
     const mine = session.view().arrows.filter((arrow) => arrow.owner === 'me');
     expect(mine.map((arrow) => arrow.id)).toEqual([1]);
+  });
+});
+
+describe('무거워지기와 갈고리 충전량 알리기', () => {
+  const PILLARS = MAPS.findIndex((m) => m.id === 'pillars');
+
+  it('무거워지기와 특수 동작을 따로 보내고, 무거워지기의 남은 효과가 다른 화면에서도 같다', () => {
+    const made = room(['a', 'b']);
+    const a = made.get('a');
+    const b = made.get('b');
+    made.run(3200);
+    made.inputs.set('a', press('heavy'));
+    made.run((TUNING.heavyFadeTime * 1000) / 2);
+    expect(made.states.get('a')!.ball!.i).toBe(32);
+    expect(ball(a, 'a')).toMatchObject({ heavy: true });
+    expect(ball(a, 'a').heft).toBeCloseTo(0.5, 1);
+    expect(ball(b, 'a')).toMatchObject({ heavy: true });
+    expect(ball(b, 'a').heft).toBeCloseTo(ball(a, 'a').heft, 1);
+    expect(made.states.get('a')!.ball!.h).toBeCloseTo(ball(a, 'a').heft, 1);
+    // 특수 동작만 누른 사람은 무거워지지 않습니다.
+    made.inputs.set('b', press('special'));
+    made.run(200);
+    expect(made.states.get('b')!.ball!.i).toBe(16);
+    expect(ball(a, 'b')).toMatchObject({ heavy: false, heft: 1 });
+  });
+
+  it('줄에 매달린 사람의 충전량이 다른 화면에서도 줄고, 다 쓰면 줄이 풀리고 잠긴 것으로 보인다', () => {
+    // 기둥 맵에서 두 번째 사람은 위쪽 발판 아래에서 시작합니다.
+    const made = room(['a', 'b'], { mode: 'grapple', mapSetting: PILLARS });
+    const a = made.get('a');
+    const b = made.get('b');
+    made.run(3200);
+    made.inputs.set('b', press('special'));
+    made.run((TUNING.ropeDrainTime * 1000) / 2);
+    expect(ball(b, 'b').rope).not.toBeNull();
+    expect(ball(a, 'b').rope).not.toBeNull();
+    expect(ball(b, 'b').fuel).toBeCloseTo(0.5, 1);
+    expect(ball(a, 'b').fuel).toBeCloseTo(ball(b, 'b').fuel, 1);
+    made.run((TUNING.ropeDrainTime * 1000) / 2 + 300);
+    expect(ball(b, 'b')).toMatchObject({ rope: null, fuel: 0, locked: true });
+    expect(ball(a, 'b')).toMatchObject({ rope: null, fuel: 0, locked: true });
+    expect(made.states.get('b')!.ball).toMatchObject({ rp: null, g: 0 });
+    expect(made.states.get('b')!.ball!.l).toBeGreaterThan(0);
+    // 잠긴 시간이 지나면 양쪽에서 함께 풀리고 다시 찹니다.
+    made.inputs.set('b', NO_INPUT);
+    made.run(TUNING.ropeLockTime * 1000 + 500);
+    for (const session of [a, b]) {
+      expect(ball(session, 'b').locked).toBe(false);
+      expect(ball(session, 'b').fuel).toBeGreaterThan(0);
+    }
+  });
+
+  it('AI의 충전량과 잠금도 방장이 알려 준 값을 따른다', () => {
+    const made = room(['a', 'b'], { mode: 'grapple', bots: 1, mapSetting: PILLARS });
+    made.run(3200);
+    const wire = made.states.get('a')!.host!.bs.bot1;
+    expect(wire).toMatchObject({ h: 1, l: 0 });
+    expect(wire.g).toBeGreaterThan(0);
+    expect(ball(made.get('b'), 'bot1').fuel).toBeCloseTo(ball(made.get('a'), 'bot1').fuel, 1);
   });
 });

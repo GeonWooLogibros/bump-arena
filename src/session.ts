@@ -381,6 +381,7 @@ export class Session {
         }
         world.setRope(id, ball.rp);
         world.setAim(id, ball.am && { dx: ball.am[0], dy: ball.am[1], charge: ball.am[2] });
+        world.setMeters(id, { heft: ball.h, fuel: ball.g, lock: ball.l });
       }
       world.syncShots(id, ball.ar);
     }
@@ -413,13 +414,19 @@ export class Session {
       const me = world.state(id);
       if (!me) continue;
       const others = world.balls().filter((b) => b.alive && b.id !== id);
+      const aim = world.aim(id);
+      const meters = world.meters(id);
       const sense = {
         map,
         mode: this.current.settings.mode,
         me,
         others,
         roped: world.rope(id) !== null,
-        charge: world.aim(id)?.charge ?? 0,
+        charge: aim?.charge ?? 0,
+        aimDir: aim && ([aim.dx, aim.dy] as const),
+        heft: meters?.heft ?? 1,
+        fuel: meters?.fuel ?? 1,
+        locked: (meters?.lock ?? 0) > 0,
       };
       const input = bot.think(sense, TUNING.step);
       this.botInputs.set(id, input);
@@ -431,6 +438,7 @@ export class Session {
   private wire(world: World, id: string, input: Readonly<Input>): BallWire {
     const last = world.balls().find((b) => b.id === id);
     const aim = world.aim(id);
+    const meters = world.meters(id);
     return {
       b: world.state(id) ?? { x: last?.x ?? 0, y: last?.y ?? 0, vx: 0, vy: 0, av: 0 },
       i: packInput(input),
@@ -438,6 +446,9 @@ export class Session {
       rp: world.rope(id),
       am: aim && [aim.dx, aim.dy, aim.charge],
       ar: world.shots(id),
+      h: meters?.heft ?? 1,
+      g: meters?.fuel ?? 1,
+      l: meters?.lock ?? 0,
     };
   }
 }

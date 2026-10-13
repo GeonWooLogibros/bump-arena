@@ -20,10 +20,10 @@ import type { MenuView } from './ui/menus';
 
 /** 초대 링크를 복사한 결과를 보여 주는 시간(밀리초). */
 const COPIED_MS = 2000;
-/** 터치 화면의 특수 동작 버튼에 쓰는 글자입니다. */
 /** 튕기는 발판에서 튕길 때는 뛰는 소리를 이 빠르기로 높여서 냅니다. */
 const BOUNCE_RATE = 1.7;
-const SPECIAL_LABEL: Record<Mode, string> = { classic: '무거워지기', grapple: '줄', arrows: '화살' };
+/** 터치 화면의 특수 동작 버튼에 쓰는 글자입니다. 클래식에는 특수 동작이 없으므로 버튼을 보여 주지 않습니다. */
+const SPECIAL_LABEL: Record<Mode, string> = { classic: '', grapple: '줄', arrows: '화살' };
 
 const app = document.querySelector<HTMLDivElement>('#app');
 if (!app) throw new Error('#app이 없습니다.');
@@ -262,7 +262,8 @@ function frame(time: number): void {
     adopt();
 
     // 그릴 때와 같은 변환으로 마우스 위치를 세계 좌표로 바꿉니다.
-    const pointer = input.pointer();
+    // 갈고리에서는 마우스 버튼으로 줄을 걸 때만 마우스 쪽으로 겁니다. 키보드로 걸면 위에서 가장 가까운 곳에 겁니다.
+    const pointer = input.pointer(mp.session?.match.settings.mode === 'grapple');
     const aim = pointer && toWorld(fitView(width, height), pointer[0], pointer[1]);
     const events = mp.update(elapsed, input.read(), aim);
     const view = mp.stage === 'game' ? (mp.session?.view() ?? null) : null;

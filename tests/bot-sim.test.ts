@@ -94,13 +94,19 @@ function play(mode: Mode, map: GameMap, setup: Setup, random: () => number): Gam
     for (const [id, bot] of bots) {
       const me = world.state(id);
       if (!me) continue;
+      const aim = world.aim(id);
+      const meters = world.meters(id);
       const sense: BotSense = {
         map: world.footing(),
         mode,
         me,
         others: views.filter((b) => b.id !== id),
         roped: world.rope(id) !== null,
-        charge: world.aim(id)?.charge ?? 0,
+        charge: aim?.charge ?? 0,
+        aimDir: aim && [aim.dx, aim.dy],
+        heft: meters?.heft ?? 1,
+        fuel: meters?.fuel ?? 1,
+        locked: (meters?.lock ?? 0) > 0,
       };
       world.setInput(id, bot.think(sense, TUNING.step));
     }

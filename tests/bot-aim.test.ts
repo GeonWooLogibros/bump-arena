@@ -3,6 +3,7 @@ import { aimShot, closest } from '../src/game/bot-aim';
 import { arrowSpeed } from '../src/physics/arrows';
 import { MAPS } from '../src/game/maps';
 import type { GameMap } from '../src/game/maps';
+import { TUNING } from '../src/game/modes';
 
 const flat = MAPS.find((m) => m.id === 'flat')!;
 const at = (x: number, y = 11.9) => ({ x, y });
@@ -29,17 +30,19 @@ describe('closest', () => {
 
 describe('aimShot', () => {
   it('가까운 같은 높이의 상대는 수평으로 겨눕니다', () => {
-    expect(aimShot(flat, at(16), at(20), 0.6, 0.4)?.keys).toEqual([1, 0]);
-    expect(aimShot(flat, at(16), at(12), 0.6, 0.4)?.keys).toEqual([-1, 0]);
+    expect(aimShot(flat, at(16), at(20), 0.6, 0.4)?.dir).toEqual([1, 0]);
+    expect(aimShot(flat, at(16), at(12), 0.6, 0.4)?.dir).toEqual([-1, 0]);
   });
 
   it('먼 같은 높이의 상대는 위쪽 대각선으로 겨눕니다', () => {
-    expect(aimShot(flat, at(6), at(26), 0.6, 0.4)?.keys).toEqual([1, -1]);
+    const dir = aimShot(flat, at(6), at(26), 0.6, 0.4)!.dir;
+    expect(dir[0]).toBeCloseTo(Math.SQRT1_2);
+    expect(dir[1]).toBeCloseTo(-Math.SQRT1_2);
   });
 
   it('바로 위나 아래의 상대는 위나 아래로 겨눕니다', () => {
-    expect(aimShot(flat, at(16), at(16, 7), 0.6, 0.4)?.keys).toEqual([0, -1]);
-    expect(aimShot(flat, at(16, 5), at(16, 9), 0.6, 0.4)?.keys).toEqual([0, 1]);
+    expect(aimShot(flat, at(16), at(16, 7), 0.6, 0.4)?.dir).toEqual([0, -1]);
+    expect(aimShot(flat, at(16, 5), at(16, 9), 0.6, 0.4)?.dir).toEqual([0, 1]);
   });
 
   it('모을 시간은 0.4~0.9초 안에서 prefer에 가장 가까운 것을 고릅니다', () => {
@@ -53,6 +56,22 @@ describe('aimShot', () => {
 
   it('이미 from보다 오래 모았으면 그보다 짧은 시간은 고르지 않습니다', () => {
     expect(aimShot(flat, at(16), at(20), 0.4, 0.7)?.release).toBeGreaterThanOrEqual(0.7);
+  });
+
+  it('지금 겨누는 방향에서 돌리는 시간보다 일찍 놓아야 하는 세기는 고르지 않습니다', () => {
+    // 위를 겨누고 있다가 오른쪽의 상대를 겨누려면 4분의 1바퀴를 돌려야 합니다.
+    const quarter = Math.PI / 2 / TUNING.arrowTurnSpeed;
+    const plan = aimShot(flat, at(16), at(20), 0.4, 0.4, 0.5, { aim: [0, -1], charge: 0 });
+    expect(plan?.dir).toEqual([1, 0]);
+    expect(plan!.release).toBeGreaterThanOrEqual(quarter);
+    expect(plan!.release).toBeLessThan(quarter + 0.05);
+    // 이미 0.3초를 모았으면 그만큼 더 늦게 놓습니다.
+    const late = aimShot(flat, at(16), at(20), 0.4, 0.4, 0.5, { aim: [0, -1], charge: 0.3 });
+    expect(late!.release).toBeGreaterThanOrEqual(0.3 + quarter);
+    // 반 바퀴는 0.9초 안에 돌리고 놓을 수 없습니다.
+    expect(aimShot(flat, at(16), at(20), 0.4, 0.4, 0.5, { aim: [-1, 0], charge: 0.3 })).toBeNull();
+    // 이미 그쪽을 겨누고 있으면 바로 놓을 수 있습니다.
+    expect(aimShot(flat, at(16), at(20), 0.4, 0.4, 0.5, { aim: [1, 0], charge: 0 })?.release).toBeCloseTo(0.4);
   });
 
   it('수평으로는 못 미치고 대각선으로는 넘어가는 거리에서는 null입니다', () => {

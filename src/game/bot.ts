@@ -3,7 +3,7 @@ import { TUNING } from './modes';
 import type { Mode } from './modes';
 import { NO_INPUT } from '../physics/world';
 import type { Input } from '../physics/world';
-import { ARROW_CHARGE_MAX, ARROW_CHARGE_MIN, aimShot } from './bot-aim';
+import { ARROW_CHARGE_MAX, ARROW_CHARGE_MIN, aimShot, turnTo } from './bot-aim';
 import { SKILLS, THINK_FLOOR } from './bot-skill';
 import type { BotSkill } from './bot-skill';
 import { GRID, GROUND_GAP, LAND_INSET, crossing, heightAt, leapSpeed, ledgeUnder, terrainOf } from './bot-terrain';
@@ -37,6 +37,8 @@ const RESCUE_DEPTH = 2.5;
 const HOOK_REACH = 1.6;
 /** 줄에 매달린 채 속력이 이보다 느려지면 줄을 놓습니다(m/s). */
 const ROPE_SLOW = 1.5;
+/** 갈고리 충전량이 이보다 적으면 줄을 걸지 않고 벽을 찹니다. 걸자마자 풀려서 잠기기만 합니다. */
+const HOOK_FUEL = 0.15;
 
 /** 목표를 다시 고르는 간격(초)의 범위입니다. */
 const RETARGET_MIN = 3;
@@ -87,6 +89,8 @@ const HEAVY_MAX = 0.5;
 /** 무거워지기를 다시 쓰기까지 쉬는 시간(초)의 범위입니다. */
 const HEAVY_REST_MIN = 0.5;
 const HEAVY_REST_MAX = 1.2;
+/** 무거워지기의 남은 효과가 이보다 적으면 누르지 않고 돌아오기를 기다립니다. */
+const HEAVY_WORTH = 0.5;
 
 /** 생각 한 번 사이에 가로 속도가 이만큼 넘게 바뀌면 세게 부딪친 것으로 봅니다(m/s). */
 const STUN_JOLT = 3.5;
@@ -111,6 +115,10 @@ const ARROW_FAR = 6.5;
 /** 화살 모드에서 서성일 곳을 다시 고르는 간격(초)의 범위입니다. */
 const WANDER_MIN = 0.5;
 const WANDER_MAX = 1.3;
+/** 겨누는 방향이 쏘려는 방향과 이 각도(라디안) 안이면 맞춘 것으로 봅니다. 한 step에 도는 각도의 절반입니다. */
+const AIM_ALIGN = (TUNING.arrowTurnSpeed * TUNING.step) / 2;
+/** 비스듬한 방향의 단위 벡터 성분입니다. */
+const DIAGONAL = Math.SQRT1_2;
 
 /** AI가 보는 상황입니다. */
 export interface BotSense {
@@ -122,6 +130,13 @@ export interface BotSense {
   roped: boolean;
   /** 지금 모은 시간 비율 0~1. */
   charge: number;
+  /** 화살을 모으는 동안 겨누고 있는 방향의 단위 벡터입니다. 모으고 있지 않으면 null입니다. */
+  aimDir: readonly [number, number] | null;
+  /** 무거워지기의 남은 효과 0~1. */
+  heft: number;
+  /** 갈고리 충전량 0~1과, 줄을 쓸 수 없이 잠겨 있는지 여부. */
+  fuel: number;
+  locked: boolean;
 }
 
 type Me = BotSense['me'];
@@ -130,10 +145,10 @@ type Other = BotSense['others'][number];
 /** 상대와 같은 자리에서 싸울 때의 행동입니다. */
 type Tactic = 'charge' | 'retreat' | 'hop';
 
-/** 모으고 있는 화살입니다. id는 겨누는 상대, keys는 누를 방향, release는 놓을 때까지 모을 시간(초)입니다. */
+/** 모으고 있는 화살입니다. id는 겨누는 상대, dir은 쏘려는 방향의 단위 벡터, release는 놓을 때까지 모을 시간(초)입니다. */
 interface Shot {
   id: string;
-  keys: readonly [number, number];
+  dir: readonly [number, number];
   release: number;
   prefer: number;
   since: number;
@@ -201,6 +216,8 @@ export class Bot {
   private lastChanceAt: number;
   private wanderX = 0;
   private wanderUntil = 0;
+  /** 마지막으로 움직인 좌우 방향입니다. 화살을 모으기 시작할 때 겨누는 방향이 이쪽의 비스듬한 위입니다. */
+  private facing = 1;
 
   /** 상황을 다시 보고 입력을 고르는 간격(초)입니다. */
   private readonly interval: number;
@@ -219,19 +236,28 @@ export class Bot {
 
   /**
    * dt초가 지난 뒤 낼 입력입니다. 생각할 때가 아니면 지난 입력을 그대로 돌려줍니다.
-   * 모으던 화살만은 정해 둔 만큼 모이는 순간에 놓습니다.
+   * 모으던 화살만은 좌우 키를 쏘려는 방향에 이르는 순간에 떼고, 방향이 맞은 채로 정해 둔 만큼 모이는 순간에 놓습니다.
    */
   think(sense: BotSense, dt: number): Input {
     this.clock += dt;
     this.elapsed += dt;
-    if (this.shot && sense.charge * TUNING.arrowMaxCharge >= this.shot.release - 1e-9) {
-      this.rest();
-      this.held = { ...NO_INPUT };
+    if (this.shot) {
+      const turn = sense.aimDir ? turnTo(sense.aimDir, this.shot.dir) : 0;
+      const aligned = Math.abs(turn) <= AIM_ALIGN;
+      if (aligned && sense.charge * TUNING.arrowMaxCharge >= this.shot.release - 1e-9) {
+        this.rest();
+        this.held = { ...NO_INPUT };
+      } else {
+        this.held.left = turn < -AIM_ALIGN;
+        this.held.right = turn > AIM_ALIGN;
+      }
     }
     if (this.elapsed >= this.interval - 1e-9) {
       this.held = this.decide(sense);
       this.elapsed = 0;
     }
+    // 모으는 동안의 좌우 키는 방향을 돌릴 뿐이므로, 움직일 때의 좌우만 기억합니다.
+    if (!this.shot && this.held.left !== this.held.right) this.facing = this.held.right ? 1 : -1;
     return this.held;
   }
 
@@ -405,8 +431,8 @@ export class Bot {
       // 자리 모서리가 가까울 때만 줄을 겁니다. 멀리서 걸면 자리 밑으로 흔들려 들어가 올라올 수 없습니다.
       const corner = me.x < ledge.x0 ? ledge.x0 : ledge.x1;
       const near = Math.hypot(corner - me.x, heightAt(ledge, corner) - me.y) <= HOOK_REACH;
-      // 줄은 누르는 순간에만 걸리므로, 누르고 있었다면 한 번 뗍니다.
-      input.special = near && !this.held.special;
+      // 줄은 누르는 순간에만 걸리므로, 누르고 있었다면 한 번 뗍니다. 잠겨 있거나 충전량이 거의 없으면 벽만 찹니다.
+      input.special = near && !this.held.special && !sense.locked && sense.fuel >= HOOK_FUEL;
     }
     return input;
   }
@@ -488,13 +514,14 @@ export class Bot {
       if (
         this.tactic !== 'retreat' &&
         this.clock >= this.heavyReadyAt &&
+        sense.heft >= HEAVY_WORTH &&
         dist < HEAVY_RANGE + closing * this.interval
       ) {
         // 때를 놓치는 경우도 있어야 한쪽만 무거운 채로 부딪쳐 승부가 납니다.
         this.heavyUntil = this.random() < this.skill.heavyChance ? this.clock + this.between(HEAVY_MIN, HEAVY_MAX) : this.clock;
         this.heavyReadyAt = this.heavyUntil + this.between(HEAVY_REST_MIN, HEAVY_REST_MAX);
       }
-      input.special = this.clock < this.heavyUntil - 1e-9;
+      input.heavy = this.clock < this.heavyUntil - 1e-9;
     }
     // 달아나는 상대는 부딪쳐도 속력을 받아 주지 못하므로, 거의 서 있거나 다가오는 상대만 그대로 들이받습니다.
     const ramming =
@@ -539,11 +566,13 @@ export class Bot {
     if (this.clock >= this.nextShotAt && grounded && this.settles(me, ledge, ARROW_CHARGE_MAX)) {
       const prefer = this.between(ARROW_CHARGE_MIN, ARROW_CHARGE_MAX);
       for (const other of [target, ...sense.others.filter((o) => o !== target)]) {
-        const plan = aimShot(sense.map, me, other, prefer, ARROW_CHARGE_MIN, this.skill.aimTolerance);
+        // 모으기 시작하면 마지막에 움직이던 쪽의 비스듬한 위를 겨누므로, 거기서 돌릴 시간을 셈에 넣습니다.
+        const turning = { aim: [this.facing * DIAGONAL, -DIAGONAL] as const, charge: 0 };
+        const plan = aimShot(sense.map, me, other, prefer, ARROW_CHARGE_MIN, this.skill.aimTolerance, turning);
         if (!plan) continue;
         this.shot = { ...plan, id: other.id, prefer, since: this.clock };
         this.lastChanceAt = this.clock;
-        return this.keys(this.shot);
+        return { ...NO_INPUT, special: true };
       }
     }
     if (this.clock - this.lastChanceAt > ARROW_PATIENCE) {
@@ -567,7 +596,7 @@ export class Bot {
     return this.guard(steer(me, this.wanderX, RUN_SPEED), me, ledge);
   }
 
-  /** 모으는 동안 겨누는 방향을 고쳐 잡습니다. 너무 오래 모이지 않으면 그만둡니다. */
+  /** 모으는 동안 쏘려는 방향과 놓을 때를 고쳐 잡습니다. 너무 오래 모이지 않으면 그만둡니다. 좌우 키는 think가 step마다 정합니다. */
   private aim(sense: BotSense, shot: Shot): Input {
     const charge = sense.charge * TUNING.arrowMaxCharge;
     if (this.clock - shot.since > TUNING.arrowCooldown + ARROW_CHARGE_MAX + this.interval) {
@@ -584,22 +613,13 @@ export class Bot {
         shot.prefer,
         Math.max(ARROW_CHARGE_MIN, charge + TUNING.step),
         this.skill.aimTolerance,
+        sense.aimDir && { aim: sense.aimDir, charge },
       );
     if (plan) {
-      shot.keys = plan.keys;
+      shot.dir = plan.dir;
       shot.release = plan.release;
     }
-    return this.keys(shot);
-  }
-
-  private keys(shot: Shot): Input {
-    const [kx, ky] = shot.keys;
-    return {
-      left: kx < 0,
-      right: kx > 0,
-      up: ky < 0,
-      down: ky > 0,
-      special: true,
-    };
+    const turn = sense.aimDir ? turnTo(sense.aimDir, shot.dir) : 0;
+    return { ...NO_INPUT, special: true, left: turn < -AIM_ALIGN, right: turn > AIM_ALIGN };
   }
 }

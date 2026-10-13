@@ -20,6 +20,10 @@ const sense = (over: Partial<BotSense> = {}): BotSense => ({
   others: [],
   roped: false,
   charge: 0,
+  aimDir: null,
+  heft: 1,
+  fuel: 1,
+  locked: false,
   ...over,
 });
 
@@ -122,8 +126,18 @@ describe('목표 고르기', () => {
 
 describe('클래식', () => {
   it('상대가 1m 옆이면 무거워지고 4m 옆이면 무거워지지 않습니다', () => {
-    expect(new Bot(() => 0.5).think(sense({ others: [foe(17)] }), TICK).special).toBe(true);
-    expect(new Bot(() => 0.5).think(sense({ others: [foe(20)] }), TICK).special).toBe(false);
+    expect(new Bot(() => 0.5).think(sense({ others: [foe(17)] }), TICK).heavy).toBe(true);
+    expect(new Bot(() => 0.5).think(sense({ others: [foe(20)] }), TICK).heavy).toBe(false);
+  });
+
+  it('무거워지기는 특수 동작 키가 아닌 무거워지기 키로 씁니다', () => {
+    const inputs = watch(new Bot(seeded(7)), sense({ others: [foe(17)] }), 12);
+    expect(inputs.some((input) => input.special)).toBe(false);
+  });
+
+  it('무거워지기의 효과가 절반도 남지 않았으면 누르지 않고 돌아오기를 기다립니다', () => {
+    const inputs = watch(new Bot(seeded(7)), sense({ others: [foe(17)], heft: 0.3 }), 12);
+    expect(inputs.some((input) => input.heavy)).toBe(false);
   });
 
   it('무거워지기는 0.5초 넘게 이어 쓰지 않고, 쓰는 시간보다 쉬는 시간이 깁니다', () => {
@@ -131,10 +145,10 @@ describe('클래식', () => {
     let run = 0;
     let longest = 0;
     for (const input of inputs) {
-      run = input.special ? run + 1 : 0;
+      run = input.heavy ? run + 1 : 0;
       longest = Math.max(longest, run);
     }
-    const heavy = inputs.filter((input) => input.special).length;
+    const heavy = inputs.filter((input) => input.heavy).length;
     expect(heavy).toBeGreaterThan(0);
     expect(longest * TICK).toBeLessThanOrEqual(0.5 + TICK);
     expect(heavy).toBeLessThan(inputs.length / 2);
@@ -192,6 +206,17 @@ describe('갈고리', () => {
     expect(far.special).toBe(false);
   });
 
+  it('줄이 잠겨 있거나 충전량이 거의 없으면 줄을 걸지 않고 벽만 찹니다', () => {
+    const falling = { mode: 'grapple', me: at(4.3, 13, 0, 5) } as const;
+    for (const meters of [{ locked: true, fuel: 0 }, { locked: false, fuel: 0.05 }]) {
+      const input = new Bot(() => 0.5).think(sense({ ...falling, ...meters }), TICK);
+      expect(input.special).toBe(false);
+      expect(input.up).toBe(true);
+      expect(input.right).toBe(true);
+    }
+    expect(new Bot(() => 0.5).think(sense({ ...falling, fuel: 0.5 }), TICK).special).toBe(true);
+  });
+
   it('발판 위에 서 있을 때는 줄을 걸지 않습니다', () => {
     const inputs = watch(new Bot(seeded(3)), sense({ mode: 'grapple', others: [foe(17)] }), 6);
     expect(inputs.some((input) => input.special)).toBe(false);
@@ -237,6 +262,41 @@ describe('화살', () => {
       expect(charge).toBeLessThanOrEqual(0.9 + 1 / 60);
     }
     expect(new Set(charges.map((charge) => charge.toFixed(2))).size).toBeGreaterThan(1);
+  });
+
+  /** 모으기 시작할 때까지 돌린 뒤, 겨누는 방향을 aimDir로 알려 주면서 seconds초 동안 낸 입력을 모읍니다. charge는 모으는 만큼 오릅니다. */
+  function charging(bot: Bot, situation: BotSense, aimDir: readonly [number, number], seconds: number): Input[] {
+    const step = 1 / 60;
+    for (let time = 0; time < 10 && !bot.think(situation, step).special; time += step);
+    const inputs: Input[] = [];
+    for (let charge = step; charge < seconds; charge += step) {
+      inputs.push({ ...bot.think({ ...situation, aimDir, charge: Math.min(1, charge) }, step) });
+    }
+    return inputs;
+  }
+
+  it('겨누는 방향이 쏘려는 방향과 다르면 그쪽으로 좌우 키를 누르고, 위아래 키는 누르지 않습니다', () => {
+    const near = arrows({ others: [foe(20)] });
+    // 오른쪽의 상대를 수평으로 쏘려면, 위를 겨누고 있을 때는 시계 방향(오른쪽 키)으로, 아래를 겨누고 있을 때는 반대로 돌립니다.
+    for (const [aimDir, key, other] of [
+      [[0, -1], 'right', 'left'],
+      [[0, 1], 'left', 'right'],
+    ] as const) {
+      const inputs = charging(new Bot(() => 0.5), near, aimDir, 0.3);
+      for (const input of inputs) {
+        expect(input).toMatchObject({ special: true, up: false, down: false, heavy: false, [key]: true, [other]: false });
+      }
+    }
+  });
+
+  it('방향이 맞을 때까지는 다 모여도 놓지 않고, 방향이 맞으면 좌우 키를 떼고 놓습니다', () => {
+    const near = arrows({ others: [foe(20)] });
+    const turning = charging(new Bot(() => 0.5), near, [0, -1], 1.2);
+    expect(turning.every((input) => input.special)).toBe(true);
+    const aligned = charging(new Bot(() => 0.5), near, [1, 0], 1.2);
+    const until = aligned.findIndex((input) => !input.special);
+    expect(until).toBeGreaterThan(0);
+    expect(aligned.slice(0, until).every((input) => !input.left && !input.right)).toBe(true);
   });
 
   it('맞힐 방향이 없으면 모으지 않고 움직입니다', () => {

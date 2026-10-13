@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { decodeBall, decodeHost, encodeBall, encodeHost, readPeer, roundKey, MAX_SHOTS } from '../src/net/wire';
 import type { BallWire, HostWire } from '../src/net/wire';
+import { TUNING } from '../src/game/modes';
 import { DEFAULT_SETTINGS } from '../src/game/round';
 
 const json = <T>(value: T): unknown => JSON.parse(JSON.stringify(value));
@@ -12,6 +13,9 @@ const ball = (): BallWire => ({
   rp: [4.444, 5.555],
   am: [0.1234, -0.5678, 0.9],
   ar: [{ id: 1, x: 1.111, y: 2.222, vx: 3.333, vy: 4.444, age: 0.555 }],
+  h: 0.456,
+  g: 0.123,
+  l: 1.234,
 });
 
 const host = (): HostWire => ({
@@ -43,6 +47,9 @@ describe('공 왕복', () => {
       rp: [4.44, 5.56],
       am: [0.12, -0.57, 0.9],
       ar: [{ id: 1, x: 1.11, y: 2.22, vx: 3.33, vy: 4.44, age: 0.56 }],
+      h: 0.46,
+      g: 0.12,
+      l: 1.23,
     });
   });
 
@@ -56,9 +63,29 @@ describe('공 왕복', () => {
     }
   });
 
-  it('i는 0~31의 정수로 맞춥니다', () => {
+  it('i는 0~63의 정수로 맞춥니다', () => {
     const read = (i: unknown) => decodeBall({ ...(json(encodeBall(ball())) as object), i })?.i;
-    expect([read(99), read(-4), read(5.9), read('x'), read(NaN), read(17)]).toEqual([31, 0, 5, 0, 0, 17]);
+    expect([read(99), read(-4), read(5.9), read('x'), read(NaN), read(17), read(48)]).toEqual([63, 0, 5, 0, 0, 17, 48]);
+  });
+
+  it('무거워지기의 남은 효과와 갈고리 충전량은 0~1로 자르고, 없거나 숫자가 아니면 가득 찬 것으로 봅니다', () => {
+    for (const key of ['h', 'g'] as const) {
+      const read = (value: unknown) => decodeBall({ ...(json(encodeBall(ball())) as object), [key]: value })?.[key];
+      expect([read(0), read(0.4), read(1), read(7), read(-3)]).toEqual([0, 0.4, 1, 1, 0]);
+      expect([read(NaN), read(Infinity), read(-Infinity), read('0.5'), read(null), read(undefined)]).toEqual([1, 1, 1, 1, 1, 1]);
+      const wire = json(encodeBall(ball())) as Record<string, unknown>;
+      delete wire[key];
+      expect(decodeBall(wire)?.[key]).toBe(1);
+    }
+  });
+
+  it('줄이 잠긴 시간은 0~ropeLockTime으로 자르고, 없거나 숫자가 아니면 잠기지 않은 것으로 봅니다', () => {
+    const read = (l: unknown) => decodeBall({ ...(json(encodeBall(ball())) as object), l })?.l;
+    expect([read(0), read(1.5), read(TUNING.ropeLockTime), read(600), read(-2)]).toEqual([0, 1.5, TUNING.ropeLockTime, TUNING.ropeLockTime, 0]);
+    expect([read(NaN), read(Infinity), read(-Infinity), read('1'), read(null), read(undefined), read(true)]).toEqual([0, 0, 0, 0, 0, 0, 0]);
+    const wire = json(encodeBall(ball())) as Record<string, unknown>;
+    delete wire.l;
+    expect(decodeBall(wire)?.l).toBe(0);
   });
 
   it('화살 5000개가 와도 8개만 남습니다', () => {
