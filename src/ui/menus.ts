@@ -220,7 +220,7 @@ export function createMenus(root: HTMLElement, actions: MenuActions): { show(vie
     joining.append(code, join);
 
     panel.append(
-      el('h1', 'title brand', '통통 대전'),
+      el('h1', 'title brand', 'Bump Arena'),
       el('p', 'sub', '공으로 상대를 밀어내는 대전 게임입니다.'),
       labeled('이름', name),
       labeled(
