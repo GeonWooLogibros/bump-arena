@@ -27,6 +27,9 @@ const PAD: readonly { key: Key; label: string; name: string }[] = [
   { key: 'right', label: '→', name: '오른쪽' },
 ];
 
+/** 마우스를 이만큼(밀리초) 움직이지 않았으면 마우스로 겨누지 않는 것으로 봅니다. 키보드만 쓰는 사람의 화살이 가만히 둔 커서 쪽으로 나가지 않게 합니다. */
+export const MOUSE_IDLE_MS = 3000;
+
 /** Cmd, Ctrl, Alt 키 자체의 code입니다. Shift는 무거워지기에 쓰므로 여기에 넣지 않습니다. */
 const MODIFIER = /^(Meta|OS|Control|Alt)(Left|Right)$/;
 
@@ -42,6 +45,8 @@ export class InputState {
   private readonly pointers = new Map<Key, Set<number>>();
   /** 마우스의 마지막 위치(화면 px)입니다. 아직 움직이지 않았거나 창을 벗어났으면 null입니다. */
   private mouse: readonly [number, number] | null = null;
+  /** 마우스를 마지막으로 움직이거나 누른 시각(밀리초)입니다. */
+  private movedAt = 0;
   /** 마우스 왼쪽 버튼을 누르고 있는지 여부. */
   private button = false;
   /** 마우스 오른쪽 버튼을 누르고 있는지 여부. */
@@ -91,14 +96,16 @@ export class InputState {
     this.pointers.clear();
   }
 
-  mouseMove(x: number, y: number): void {
+  /** 마우스를 움직였을 때 부릅니다. now는 지금 시각(밀리초)입니다. */
+  mouseMove(x: number, y: number, now = 0): void {
     this.mouse = [x, y];
+    this.movedAt = now;
     this.keyAim = false;
   }
 
   /** 마우스 왼쪽 버튼을 눌렀을 때 부릅니다. 누르는 동안 특수 동작입니다. */
-  mouseDown(x: number, y: number): void {
-    this.mouseMove(x, y);
+  mouseDown(x: number, y: number, now = 0): void {
+    this.mouseMove(x, y, now);
     this.button = true;
   }
 
@@ -119,18 +126,24 @@ export class InputState {
   /**
    * 마우스로 겨누고 있으면 그 위치(화면 px)이고, 키보드로 겨누고 있으면 null입니다.
    * pressed이면 왼쪽 버튼을 누르고 있을 때만 위치를 돌려줍니다. 키보드로 건 줄이 가만히 둔 마우스 쪽으로 가지 않게 하는 데 씁니다.
+   * now는 지금 시각(밀리초)입니다. 마우스를 MOUSE_IDLE_MS 동안 움직이지 않았고 왼쪽 버튼도 누르고 있지 않으면 키보드로 겨누는 것으로 봅니다.
    */
-  pointer(pressed = false): readonly [number, number] | null {
-    if (pressed && !this.button) return null;
+  pointer(pressed = false, now = 0): readonly [number, number] | null {
+    if (!this.button && (pressed || now - this.movedAt >= MOUSE_IDLE_MS)) return null;
     return this.keyAim ? null : this.mouse;
+  }
+
+  /** 마우스 버튼을 모두 뗀 것으로 합니다. 뗌을 알 수 없게 되었을 때 부릅니다. */
+  mouseReset(): void {
+    this.button = false;
+    this.side = false;
   }
 
   /** 창이 가려지거나 초점을 잃었을 때 부릅니다. 그동안의 뗌은 알 수 없으므로 모두 뗀 것으로 봅니다. */
   reset(): void {
     this.codes.clear();
     this.pointers.clear();
-    this.button = false;
-    this.side = false;
+    this.mouseReset();
   }
 
   read(): Input {
@@ -200,7 +213,7 @@ export function attachInput(root: HTMLElement): {
   // 터치는 화면의 버튼으로만 조작하므로 마우스만 읽습니다.
   window.addEventListener('pointermove', (event) => {
     if (event.pointerType !== 'mouse') return;
-    state.mouseMove(event.clientX, event.clientY);
+    state.mouseMove(event.clientX, event.clientY, performance.now());
     // 한 버튼을 누른 채로 다른 버튼을 누르면 pointerdown이 아니라 pointermove로 옵니다.
     press(event);
     // 창 밖에서 버튼을 떼면 뗌을 알 수 없으므로, 움직일 때마다 버튼이 아직 눌려 있는지 봅니다.
@@ -209,13 +222,13 @@ export function attachInput(root: HTMLElement): {
   });
   /** 이 이벤트로 새로 눌린 마우스 버튼을 읽습니다. 왼쪽은 특수 동작이고 오른쪽은 무거워지기입니다. */
   function press(event: PointerEvent): void {
-    // 메뉴의 버튼을 누르는 클릭은 조작으로 치지 않도록, 경기 화면을 누른 것만 봅니다.
-    if (!(event.target instanceof HTMLCanvasElement)) return;
-    if (event.button === 0 && (event.buttons & 1) !== 0) state.mouseDown(event.clientX, event.clientY);
+    // 메뉴의 버튼을 누르는 클릭은 조작으로 치지 않도록, 경기 중에 경기 화면을 누른 것만 봅니다.
+    if (!playing || !(event.target instanceof HTMLCanvasElement)) return;
+    if (event.button === 0 && (event.buttons & 1) !== 0) state.mouseDown(event.clientX, event.clientY, performance.now());
     else if (event.button === 2 && (event.buttons & 2) !== 0) state.mouseHeavy(true);
     else return;
     // 누른 채로 끌어도 화면의 글자가 골라지지 않게 합니다.
-    if (playing) event.preventDefault();
+    event.preventDefault();
   }
   window.addEventListener('pointerdown', (event) => {
     if (event.pointerType === 'mouse') press(event);
@@ -230,6 +243,8 @@ export function attachInput(root: HTMLElement): {
   document.documentElement.addEventListener('mouseleave', () => state.mouseLeave());
   window.addEventListener('contextmenu', (event) => {
     if (playing && event.target instanceof HTMLCanvasElement) event.preventDefault();
+    // 메뉴가 뜨면 그 뒤의 버튼 뗌을 알 수 없으므로 누르고 있던 버튼을 뗀 것으로 봅니다.
+    else state.mouseReset();
   });
   window.addEventListener('blur', reset);
   document.addEventListener('visibilitychange', () => {
@@ -272,7 +287,7 @@ export function attachInput(root: HTMLElement): {
 
   return {
     read: () => state.read(),
-    pointer: (pressed) => state.pointer(pressed),
+    pointer: (pressed) => state.pointer(pressed, performance.now()),
     touch: coarse,
     setPlaying(value) {
       playing = value;

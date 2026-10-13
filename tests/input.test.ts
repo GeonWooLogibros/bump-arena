@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { InputState } from '../src/input';
+import { InputState, MOUSE_IDLE_MS } from '../src/input';
 
 const NONE = { left: false, right: false, up: false, down: false, heavy: false, special: false };
 
@@ -273,6 +273,35 @@ describe('InputState 마우스', () => {
     state.keyDown('KeyA', false);
     state.keyDown('KeyZ', false);
     expect(state.pointer()).toEqual([120, 80]);
+  });
+
+  it('마우스를 MOUSE_IDLE_MS 동안 움직이지 않으면 키보드로 겨누고, 다시 움직이면 마우스로 겨눈다', () => {
+    const state = new InputState();
+    state.mouseMove(120, 80, 1000);
+    expect(state.pointer(false, 1000 + MOUSE_IDLE_MS - 1)).toEqual([120, 80]);
+    expect(state.pointer(false, 1000 + MOUSE_IDLE_MS)).toBeNull();
+    state.keyDown('KeyZ', false);
+    expect(state.pointer(false, 1000 + MOUSE_IDLE_MS + 500)).toBeNull();
+    state.mouseMove(121, 80, 9000);
+    expect(state.pointer(false, 9100)).toEqual([121, 80]);
+  });
+
+  it('마우스 버튼으로 모으는 동안에는 마우스를 오래 움직이지 않아도 마우스로 겨눈다', () => {
+    const state = new InputState();
+    state.mouseDown(120, 80, 1000);
+    expect(state.pointer(false, 1000 + MOUSE_IDLE_MS * 3)).toEqual([120, 80]);
+    expect(state.pointer(true, 1000 + MOUSE_IDLE_MS * 3)).toEqual([120, 80]);
+    state.mouseUp();
+    expect(state.pointer(false, 1000 + MOUSE_IDLE_MS * 3)).toBeNull();
+  });
+
+  it('mouseReset은 두 버튼을 모두 떼고 키는 그대로 둔다', () => {
+    const state = new InputState();
+    state.keyDown('ArrowLeft', false);
+    state.mouseDown(120, 80);
+    state.mouseHeavy(true);
+    state.mouseReset();
+    expect(state.read()).toEqual({ ...NONE, left: true });
   });
 
   it('마우스가 창을 벗어나면 키보드로 겨눈다. 버튼을 누르고 있으면 그대로 둔다', () => {
