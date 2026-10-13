@@ -6,5 +6,7 @@ export default defineConfig({
   test: {
     // 물리를 수백 걸음 진행하는 테스트가 있어서 넉넉히 둡니다.
     testTimeout: 20000,
+    // 모의 경기 수백 판을 준비하는 beforeAll이 느린 기기(CI)에서도 끝나게 넉넉히 둡니다.
+    hookTimeout: 180000,
   },
 });
