@@ -63,6 +63,8 @@ const BANNER_Y = 3.6;
 /** 카운트다운 숫자를 쓰는 높이(미터)와 불투명도입니다. 공을 가리지 않게 화면 위쪽에 조금 비치게 씁니다. */
 const COUNT_Y = 2.9;
 const COUNT_ALPHA = 0.8;
+/** 모으지 않을 때 마우스 쪽으로 그리는 조준 표시의 불투명도입니다. */
+const AIM_GUIDE_ALPHA = 0.35;
 /** 화면이 흔들리는 폭(미터)입니다. */
 const SHAKE_REACH = 0.14;
 /** 무거워진 공의 안쪽에 덧칠하는 어두운 색입니다. */
@@ -90,6 +92,12 @@ export function fitView(width: number, height: number): ViewBox {
     offsetX: (width - TUNING.viewW * scale) / 2,
     offsetY: (height - TUNING.viewH * scale) / 2,
   };
+}
+
+/** 화면 위치(px)를 세계 위치(m)로 바꿉니다. 화면에 그릴 자리가 없으면 null입니다. */
+export function toWorld(box: ViewBox, x: number, y: number): [number, number] | null {
+  if (!(box.scale > 0)) return null;
+  return [(x - box.offsetX) / box.scale, (y - box.offsetY) / box.scale];
 }
 
 /** 참가자의 색입니다. 방을 나가서 정보가 없으면 회색입니다. */
@@ -273,10 +281,37 @@ function drawBall(ctx: CanvasRenderingContext2D, pose: BallPose, colors: BallCol
   ctx.restore();
 }
 
-/** 화살을 모으는 동안 겨누는 방향의 선과 모인 힘만큼 채워지는 호를 그립니다. */
-function drawAim(ctx: CanvasRenderingContext2D, ball: BallPose, px: number): void {
+/** 공에서 (x, y)를 향하는 단위 벡터입니다. 공의 중심과 겹치면 null입니다. */
+function toward(ball: BallPose, x: number, y: number): [number, number] | null {
+  const dx = x - ball.x;
+  const dy = y - ball.y;
+  const length = Math.hypot(dx, dy);
+  return length > 1e-3 ? [dx / length, dy / length] : null;
+}
+
+/** 모으지 않을 때 마우스로 겨누는 방향을 옅은 선으로 그립니다. */
+function drawAimGuide(ctx: CanvasRenderingContext2D, ball: BallPose, dir: readonly [number, number], px: number): void {
+  const near = TUNING.radius + 0.3;
+  const far = near + 0.5;
+  ctx.lineCap = 'round';
+  ctx.strokeStyle = ARROW;
+  ctx.lineWidth = 2.5 * px;
+  ctx.globalAlpha = AIM_GUIDE_ALPHA;
+  ctx.beginPath();
+  ctx.moveTo(ball.x + dir[0] * near, ball.y + dir[1] * near);
+  ctx.lineTo(ball.x + dir[0] * far, ball.y + dir[1] * far);
+  ctx.stroke();
+  ctx.globalAlpha = 1;
+}
+
+/**
+ * 화살을 모으는 동안 겨누는 방향의 선과 모인 힘만큼 채워지는 호를 그립니다.
+ * dir을 주면 받은 방향 대신 그 방향으로 그립니다. 마우스로 겨누는 내 공은 step을 기다리지 않고 마우스를 바로 따라갑니다.
+ */
+function drawAim(ctx: CanvasRenderingContext2D, ball: BallPose, px: number, dir: readonly [number, number] | null = null): void {
   const aim = ball.ball.aim;
   if (!aim) return;
+  const [dx, dy] = dir ?? [aim.dx, aim.dy];
   const r = TUNING.radius;
   const charge = Math.max(0, Math.min(1, aim.charge));
   const near = r + 0.3;
@@ -285,8 +320,8 @@ function drawAim(ctx: CanvasRenderingContext2D, ball: BallPose, px: number): voi
   ctx.strokeStyle = ARROW;
   ctx.lineWidth = 2.5 * px;
   ctx.beginPath();
-  ctx.moveTo(ball.x + aim.dx * near, ball.y + aim.dy * near);
-  ctx.lineTo(ball.x + aim.dx * far, ball.y + aim.dy * far);
+  ctx.moveTo(ball.x + dx * near, ball.y + dy * near);
+  ctx.lineTo(ball.x + dx * far, ball.y + dy * far);
   ctx.stroke();
   ctx.strokeStyle = 'rgba(255, 255, 255, 0.25)';
   ctx.lineWidth = 4 * px;
@@ -551,6 +586,8 @@ export function drawScene(
     time: number;
     /** 키보드 조작 안내를 그릴지 여부. 터치 버튼을 보여 주는 기기에서는 false입니다. */
     hints?: boolean;
+    /** 마우스로 겨누는 위치(세계 좌표)입니다. 키보드로 겨누면 null입니다. */
+    aim?: readonly [number, number] | null;
   },
 ): void {
   const box = fitView(s.width, s.height);
@@ -587,7 +624,14 @@ export function drawScene(
   }
   for (const pose of poses.balls) if (pose.ball.alive) drawTrail(ctx, pose, ballColors(s.players, pose.ball.id));
   for (const pose of poses.balls) if (pose.ball.alive) drawBall(ctx, pose, ballColors(s.players, pose.ball.id), px);
-  for (const pose of poses.balls) if (pose.ball.alive) drawAim(ctx, pose, px);
+  const arrows = view.match.settings.mode === 'arrows' && view.match.phase === 'play';
+  for (const pose of poses.balls) {
+    if (!pose.ball.alive) continue;
+    // 내 공은 화면이 흔들려도 마우스가 가리키는 곳을 향하게 합니다.
+    const dir = s.aim && pose.ball.id === view.me ? toward(pose, s.aim[0] - shakeX, s.aim[1] - shakeY) : null;
+    if (dir && arrows && !pose.ball.aim) drawAimGuide(ctx, pose, dir, px);
+    drawAim(ctx, pose, px, dir);
+  }
   drawEffects(ctx, s.effects, px);
   drawEdgeMarks(ctx, poses, view.me, s.players, s.time, px);
   ctx.restore();

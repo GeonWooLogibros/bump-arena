@@ -139,3 +139,88 @@ describe('InputState 터치', () => {
     expect(state.read().right).toBe(false);
   });
 });
+
+describe('InputState 마우스', () => {
+  it('왼쪽 버튼은 특수 동작이다', () => {
+    const state = new InputState();
+    state.mouseDown(100, 50);
+    expect(state.read()).toEqual({ ...NONE, special: true });
+    state.mouseUp();
+    expect(state.read()).toEqual(NONE);
+  });
+
+  it('마우스를 움직이기 전에는 겨누는 위치가 없다', () => {
+    const state = new InputState();
+    expect(state.pointer()).toBeNull();
+    state.keyDown('KeyX', false);
+    state.keyDown('ArrowUp', false);
+    expect(state.pointer()).toBeNull();
+  });
+
+  it('마우스를 움직이거나 누르면 그 위치로 겨눈다', () => {
+    const state = new InputState();
+    state.mouseMove(120, 80);
+    expect(state.pointer()).toEqual([120, 80]);
+    state.mouseDown(300, 40);
+    expect(state.pointer()).toEqual([300, 40]);
+  });
+
+  it('키보드로 모으는 동안 방향키를 누르면 키보드로 겨누고, 마우스를 움직이면 다시 마우스로 겨눈다', () => {
+    const state = new InputState();
+    state.mouseMove(120, 80);
+    state.keyDown('ShiftLeft', false);
+    expect(state.pointer()).toEqual([120, 80]);
+    state.keyDown('ArrowUp', false);
+    expect(state.pointer()).toBeNull();
+    state.mouseMove(121, 80);
+    expect(state.pointer()).toEqual([121, 80]);
+  });
+
+  it('모으지 않을 때의 방향키는 이동이므로 마우스로 계속 겨눈다', () => {
+    const state = new InputState();
+    state.mouseMove(120, 80);
+    state.keyDown('ArrowLeft', false);
+    state.keyDown('KeyD', false);
+    state.keyDown('Space', false);
+    expect(state.pointer()).toEqual([120, 80]);
+  });
+
+  it('마우스 버튼으로 모으는 동안에는 방향키를 눌러도 마우스로 겨눈다', () => {
+    const state = new InputState();
+    state.mouseDown(120, 80);
+    state.keyDown('ArrowLeft', false);
+    state.keyDown('KeyW', false);
+    expect(state.pointer()).toEqual([120, 80]);
+    expect(state.read()).toEqual({ ...NONE, left: true, up: true, special: true });
+  });
+
+  it('누르고 있던 방향키가 되풀이되어 들어와도 키보드 조준으로 바꾸지 않는다', () => {
+    const state = new InputState();
+    state.keyDown('KeyA', false);
+    state.mouseMove(120, 80);
+    state.keyDown('ShiftLeft', false);
+    state.keyDown('KeyA', false);
+    state.keyDown('ShiftLeft', false);
+    expect(state.pointer()).toEqual([120, 80]);
+  });
+
+  it('마우스가 창을 벗어나면 키보드로 겨눈다. 버튼을 누르고 있으면 그대로 둔다', () => {
+    const state = new InputState();
+    state.mouseDown(120, 80);
+    state.mouseLeave();
+    expect(state.pointer()).toEqual([120, 80]);
+    state.mouseUp();
+    state.mouseLeave();
+    expect(state.pointer()).toBeNull();
+    state.mouseMove(10, 10);
+    expect(state.pointer()).toEqual([10, 10]);
+  });
+
+  it('reset은 마우스 버튼을 떼고 겨누는 위치는 그대로 둔다', () => {
+    const state = new InputState();
+    state.mouseDown(120, 80);
+    state.reset();
+    expect(state.read()).toEqual(NONE);
+    expect(state.pointer()).toEqual([120, 80]);
+  });
+});

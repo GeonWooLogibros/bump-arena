@@ -11,17 +11,19 @@ describe('hintRows', () => {
   });
 
   it('X 뒤에 그 모드의 동작 이름을 쓴다', () => {
-    expect(hintRows('classic')[2]).toEqual({ keys: ['X'], label: '무거워지기' });
-    expect(hintRows('grapple')[2]).toEqual({ keys: ['X'], label: '줄 걸기' });
+    expect(hintRows('classic')[2]).toEqual({ keys: ['X'], mouse: 'left', label: '무거워지기' });
+    expect(hintRows('grapple')[2]).toEqual({ keys: ['X'], mouse: 'left', label: '줄 걸기' });
     expect(hintRows('classic')).toHaveLength(3);
     expect(hintRows('grapple')).toHaveLength(3);
   });
 
-  it('화살 모드에서는 모으기, 겨누기, 쏘기를 알려 준다', () => {
-    const labels = hintRows('arrows')
-      .slice(2)
-      .map((row) => row.label);
-    expect(labels).toEqual(['누르는 동안 힘 모으기', '모으는 동안 겨누기', '화살 쏘기']);
+  it('화살 모드에서는 겨누기, 모으기, 쏘기를 키와 마우스로 알려 준다', () => {
+    expect(hintRows('arrows').slice(2)).toEqual([
+      { keys: [], mouse: 'move', label: '마우스로 겨누기' },
+      { keys: ['X'], mouse: 'left', label: '누르는 동안 힘 모으기' },
+      { keys: ['방향키'], label: 'X로 모으는 동안 겨누기' },
+      { keys: ['X'], mouse: 'left', label: '떼면 화살 쏘기' },
+    ]);
   });
 
   it('문구에 "주세요"를 쓰지 않는다', () => {

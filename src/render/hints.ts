@@ -2,9 +2,13 @@
 import type { Mode } from '../game/modes';
 import type { Phase } from '../game/round';
 
-/** 안내 한 줄입니다. keys는 키 모양으로 그릴 글자들이고 label은 그 키가 하는 일입니다. */
+/**
+ * 안내 한 줄입니다. keys는 키 모양으로 그릴 글자들이고 label은 그 키가 하는 일입니다.
+ * mouse가 있으면 키 뒤에 마우스 그림을 그립니다. 'move'는 마우스를 움직이는 것이고 'left'는 왼쪽 버튼입니다.
+ */
 export interface HintRow {
   keys: string[];
+  mouse?: 'move' | 'left';
   label: string;
 }
 
@@ -20,20 +24,72 @@ const COMMON: readonly HintRow[] = [
   { keys: ['스페이스'], label: '뛰기' },
 ];
 
-/** 모드마다 다른 특수 동작의 안내입니다. 화살은 누르고 겨누고 떼는 순서를 알려 줍니다. */
+/** 모드마다 다른 특수 동작의 안내입니다. 화살은 겨누고 누르고 떼는 순서를 알려 줍니다. */
 const SPECIAL: Record<Mode, readonly HintRow[]> = {
-  classic: [{ keys: ['X'], label: '무거워지기' }],
-  grapple: [{ keys: ['X'], label: '줄 걸기' }],
+  classic: [{ keys: ['X'], mouse: 'left', label: '무거워지기' }],
+  grapple: [{ keys: ['X'], mouse: 'left', label: '줄 걸기' }],
   arrows: [
-    { keys: ['X'], label: '누르는 동안 힘 모으기' },
-    { keys: ['방향키'], label: '모으는 동안 겨누기' },
-    { keys: ['X 떼기'], label: '화살 쏘기' },
+    { keys: [], mouse: 'move', label: '마우스로 겨누기' },
+    { keys: ['X'], mouse: 'left', label: '누르는 동안 힘 모으기' },
+    { keys: ['방향키'], label: 'X로 모으는 동안 겨누기' },
+    { keys: ['X'], mouse: 'left', label: '떼면 화살 쏘기' },
   ],
 };
 
 /** 그 모드에서 보여 줄 안내 줄입니다. */
 export function hintRows(mode: Mode): HintRow[] {
-  return [...COMMON, ...SPECIAL[mode]].map((row) => ({ keys: [...row.keys], label: row.label }));
+  return [...COMMON, ...SPECIAL[mode]].map((row) => ({ ...row, keys: [...row.keys] }));
+}
+
+/**
+ * 마우스 그림을 그립니다. (x, middle)은 왼쪽 가운데이고 height는 키 모양과 같은 높이입니다. 그린 너비를 돌려줍니다.
+ * 'left'는 왼쪽 버튼을 칠하고, 'move'는 버튼을 칠하지 않고 양옆에 움직임을 나타내는 화살촉을 그립니다.
+ */
+function drawMouse(
+  ctx: CanvasRenderingContext2D,
+  kind: 'move' | 'left',
+  x: number,
+  middle: number,
+  height: number,
+  u: number,
+): number {
+  const width = height * 0.68;
+  const wing = kind === 'move' ? 5 * u : 0;
+  const left = x + wing;
+  const top = middle - height / 2;
+  const split = top + height * 0.42;
+  ctx.fillStyle = 'rgba(30, 36, 51, 0.9)';
+  ctx.strokeStyle = '#7f8ea8';
+  ctx.lineWidth = 1.5 * u;
+  ctx.beginPath();
+  ctx.roundRect(left, top, width, height, width / 2);
+  ctx.fill();
+  if (kind === 'left') {
+    ctx.save();
+    ctx.clip();
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(left, top, width / 2, split - top);
+    ctx.restore();
+  }
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(left, split);
+  ctx.lineTo(left + width, split);
+  ctx.moveTo(left + width / 2, top);
+  ctx.lineTo(left + width / 2, split);
+  if (kind === 'move') {
+    const reach = 3 * u;
+    for (const [tip, back] of [
+      [x, x + reach],
+      [left + width + wing, left + width + wing - reach],
+    ]) {
+      ctx.moveTo(back, middle - reach);
+      ctx.lineTo(tip, middle);
+      ctx.lineTo(back, middle + reach);
+    }
+  }
+  ctx.stroke();
+  return width + wing * 2;
 }
 
 /** 안내의 불투명도입니다. 카운트다운에는 또렷하고, 경기가 시작되고 몇 초 뒤에 흐려집니다. 그 밖의 단계에서는 0입니다. */
@@ -80,6 +136,7 @@ export function drawHints(
       ctx.fillText(key, x + width / 2, middle + u * 0.5);
       x += width + 3 * u;
     }
+    if (row.mouse) x += drawMouse(ctx, row.mouse, x, middle, capHeight, u) + 3 * u;
     x += 4 * u;
     ctx.font = `600 ${Math.round(13 * u)}px ${font}`;
     ctx.textAlign = 'left';

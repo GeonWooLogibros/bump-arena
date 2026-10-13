@@ -247,7 +247,7 @@ export class Multiplayer {
   }
 
   /** 매 프레임 부릅니다. 방을 읽고, Session을 진행하고, 내 상태를 보낸 뒤 그동안 일어난 일을 돌려줍니다. */
-  update(dtMs: number, input: Input): WorldEvent[] {
+  update(dtMs: number, input: Input, aim: readonly [number, number] | null = null): WorldEvent[] {
     if (!this.room || (this.stage !== 'lobby' && this.stage !== 'game')) return [];
     if (dtMs > MAX_FRAME_MS) {
       // 내 화면이 멈춰 있던 동안에는 번호가 바뀌는 것을 볼 수 없었으므로, 모두의 소식을 지금 들은 것으로 봅니다.
@@ -283,11 +283,16 @@ export class Multiplayer {
       if (bots !== session.match.settings.bots) session.setSettings({ bots });
     }
 
-    const events = session.update(dtMs, input, {
-      hosting,
-      host: hosting ? null : (host?.host ?? null),
-      peers: humans.filter((p) => !p.me),
-    });
+    const events = session.update(
+      dtMs,
+      input,
+      {
+        hosting,
+        host: hosting ? null : (host?.host ?? null),
+        peers: humans.filter((p) => !p.me),
+      },
+      aim,
+    );
     this.follow();
     this.publish(session, hosting);
     return events;

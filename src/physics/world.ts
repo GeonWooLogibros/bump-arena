@@ -129,6 +129,8 @@ interface Entry {
   cooldown: number;
   facing: 1 | -1;
   aimDir: Point;
+  /** 마우스로 겨누는 위치입니다. 없으면 방향키로 겨눕니다. */
+  aimPoint: Point | null;
   /** 지금 딛고 있는 움직이는 발판과, 지난 step에 그 발판이 움직이던 속도입니다. */
   ride: Body | null;
   rideVx: number;
@@ -168,6 +170,9 @@ const RIDE_NORMAL = 0.7;
 
 /** 움직이는 발판 위에서 좌우를 누르지 않을 때, 발판과의 속도 차가 1초에 이 비율로 줄어듭니다. */
 const RIDE_GRIP = 3;
+
+/** 겨누는 위치가 공의 중심에서 이보다 가까우면(m) 방향을 정할 수 없는 것으로 봅니다. */
+const AIM_MIN = 0.05;
 
 /** AI가 읽는 지형은 이 간격(초)으로만 새 위치로 바꿉니다. */
 const FOOTING_STEP = 0.1;
@@ -269,6 +274,7 @@ export class World {
       cooldown: 0,
       facing: 1,
       aimDir: [1, 0],
+      aimPoint: null,
       ride: null,
       rideVx: 0,
       rideVy: 0,
@@ -425,6 +431,12 @@ export class World {
   /** 공이 겨누는 방향과 모은 정도(0~1)입니다. 겨누지 않으면 null입니다. */
   aim(id: string): { dx: number; dy: number; charge: number } | null {
     return this.entries.get(id)?.aim ?? null;
+  }
+
+  /** 공이 화살을 겨눌 위치를 정합니다. 그 뒤로는 방향키 대신 공에서 이 위치를 향하는 방향으로 겨눕니다. null이면 다시 방향키로 겨눕니다. */
+  setAimPoint(id: string, point: readonly [number, number] | null): void {
+    const entry = this.entries.get(id);
+    if (entry) entry.aimPoint = point && [point[0], point[1]];
   }
 
   /** 원격 공이 겨누는 모습입니다(그리기 전용). */
@@ -668,11 +680,20 @@ export class World {
     events.push({ type: 'shoot', id });
   }
 
-  /** 누르고 있는 방향키로 만든 8방향 단위 벡터입니다. 아무것도 없으면 마지막 좌우 방향입니다. */
+  /**
+   * 겨누는 방향의 단위 벡터입니다. 겨누는 위치가 있으면 공에서 그 위치를 향하고, 없으면 누르고 있는 방향키로 만든 8방향입니다.
+   * 어느 쪽으로도 정할 수 없으면 마지막 좌우 방향입니다.
+   */
   private aimDirection(entry: Entry): Point {
-    const { input } = entry;
-    const dx = (input.right ? 1 : 0) - (input.left ? 1 : 0);
-    const dy = (input.down ? 1 : 0) - (input.up ? 1 : 0);
+    const { input, aimPoint } = entry;
+    let dx = (input.right ? 1 : 0) - (input.left ? 1 : 0);
+    let dy = (input.down ? 1 : 0) - (input.up ? 1 : 0);
+    if (aimPoint) {
+      const p = entry.body?.getPosition();
+      dx = p ? aimPoint[0] - p.x : 0;
+      dy = p ? aimPoint[1] - p.y : 0;
+      if (Math.hypot(dx, dy) < AIM_MIN) return [entry.facing, 0];
+    }
     if (dx === 0 && dy === 0) return [entry.facing, 0];
     const len = Math.hypot(dx, dy);
     return [dx / len, dy / len];

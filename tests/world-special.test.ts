@@ -170,6 +170,65 @@ describe('화살 쏘기', () => {
   });
 });
 
+describe('마우스로 겨누기', () => {
+  it('겨누는 위치가 있으면 공에서 그 위치를 향해 쏜다', () => {
+    const world = standing();
+    const { x, y } = world.state('a')!;
+    world.setAimPoint('a', [x + 3, y - 4]);
+    world.setInput('a', press('special'));
+    run(world, 30);
+    const aim = world.aim('a')!;
+    expect(aim.dx).toBeCloseTo(0.6, 2);
+    expect(aim.dy).toBeCloseTo(-0.8, 2);
+    world.setInput('a', NO_INPUT);
+    run(world, 1);
+    const shot = world.shots('a')[0];
+    expect(shot.vx / Math.hypot(shot.vx, shot.vy)).toBeCloseTo(0.6, 2);
+    expect(shot.vy / Math.hypot(shot.vx, shot.vy)).toBeCloseTo(-0.8, 1);
+  });
+
+  it('겨누는 위치가 있으면 방향키는 겨누는 데 쓰지 않는다', () => {
+    const world = standing();
+    const { x, y } = world.state('a')!;
+    world.setAimPoint('a', [x - 5, y]);
+    world.setInput('a', press('special', 'right', 'up'));
+    run(world, 10);
+    const aim = world.aim('a')!;
+    expect(aim.dx).toBeCloseTo(-1, 2);
+    expect(aim.dy).toBeCloseTo(0, 2);
+  });
+
+  it('모으는 동안 위치가 바뀌면 방향도 따라 바뀐다', () => {
+    const world = standing();
+    const { x, y } = world.state('a')!;
+    world.setAimPoint('a', [x + 5, y]);
+    world.setInput('a', press('special'));
+    run(world, 10);
+    world.setAimPoint('a', [x, y - 5]);
+    run(world, 1);
+    expect(world.aim('a')!.dy).toBeCloseTo(-1, 2);
+  });
+
+  it('위치를 지우면 다시 방향키로 겨눈다', () => {
+    const world = standing();
+    const { x, y } = world.state('a')!;
+    world.setAimPoint('a', [x - 5, y]);
+    world.setAimPoint('a', null);
+    world.setInput('a', press('special', 'up'));
+    run(world, 10);
+    expect(world.aim('a')!.dy).toBeCloseTo(-1, 2);
+  });
+
+  it('위치가 공의 중심과 겹치면 마지막 좌우 방향으로 겨눈다', () => {
+    const world = standing();
+    const { x, y } = world.state('a')!;
+    world.setAimPoint('a', [x, y]);
+    world.setInput('a', press('special'));
+    run(world, 10);
+    expect(world.aim('a')).toMatchObject({ dx: 1, dy: 0 });
+  });
+});
+
 describe('화살 모드의 이동', () => {
   it('모으는 동안에는 방향키를 눌러도 움직이지 않는다', () => {
     const world = standing();

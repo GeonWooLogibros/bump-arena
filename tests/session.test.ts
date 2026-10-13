@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { MAPS, moveOffset, spawnSlot } from '../src/game/maps';
 import { TUNING } from '../src/game/modes';
 import type { Settings } from '../src/game/round';
-import { encodeBall, encodeHost, readPeer, roundKey } from '../src/net/wire';
+import { decodeBall, encodeBall, encodeHost, readPeer, roundKey } from '../src/net/wire';
 import type { PeerState } from '../src/net/wire';
 import { NO_INPUT } from '../src/physics/world';
 import type { BallView, Input, WorldEvent } from '../src/physics/world';
@@ -265,6 +265,22 @@ describe('연습 경기', () => {
     expect(session.match.phase).toBe('countdown');
     expect(ball(session, 'me').aim).toBeNull();
     expect(session.view().arrows).toHaveLength(0);
+  });
+
+  it('마우스로 겨누는 위치를 주면 내 공이 그쪽으로 겨누고, 보내는 값에도 그 방향이 담긴다', () => {
+    const session = practice({ mode: 'arrows' });
+    tick(session, 3000);
+    const { x, y } = ball(session, 'me');
+    for (let i = 0; i < 20; i++) session.update(FRAME_MS, press('special', 'right'), SOLO, [x - 3, y - 4]);
+    const aim = ball(session, 'me').aim!;
+    expect(aim.dx).toBeCloseTo(-0.6, 1);
+    expect(aim.dy).toBeCloseTo(-0.8, 1);
+    const sent = decodeBall(encodeBall(session.mine().ball!))!;
+    expect(sent.am![0]).toBeCloseTo(aim.dx, 2);
+    expect(sent.am![1]).toBeCloseTo(aim.dy, 2);
+    session.update(FRAME_MS, press('special', 'right'), SOLO);
+    session.update(FRAME_MS, press('special', 'right'), SOLO);
+    expect(ball(session, 'me').aim).toMatchObject({ dx: 1, dy: 0 });
   });
 
   it('한 프레임이 0.5초보다 길면 단계도 공도 그대로다', () => {

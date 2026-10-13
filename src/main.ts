@@ -12,7 +12,7 @@ import type { Connection } from './net/connect';
 import type { WorldEvent } from './physics/world';
 import { Effects } from './render/effects';
 import { Poses } from './render/pose';
-import { GONE_NAME, SPARK_COLORS, ballColors, drawScene, scoreRows } from './render/scene';
+import { GONE_NAME, SPARK_COLORS, ballColors, drawScene, fitView, scoreRows, toWorld } from './render/scene';
 import type { SessionView } from './session';
 import { browserStorage, loadProfile, saveProfile } from './storage';
 import { createMenus } from './ui/menus';
@@ -261,7 +261,10 @@ function frame(time: number): void {
     resize();
     adopt();
 
-    const events = mp.update(elapsed, input.read());
+    // 그릴 때와 같은 변환으로 마우스 위치를 세계 좌표로 바꿉니다.
+    const pointer = input.pointer();
+    const aim = pointer && toWorld(fitView(width, height), pointer[0], pointer[1]);
+    const events = mp.update(elapsed, input.read(), aim);
     const view = mp.stage === 'game' ? (mp.session?.view() ?? null) : null;
     const players = mp.players();
     react(events, view, players);
@@ -272,7 +275,7 @@ function frame(time: number): void {
     const playing = view !== null && !view.watching && view.match.phase !== 'matchEnd';
     input.setPlaying(playing);
     input.setTouchVisible(playing, view ? SPECIAL_LABEL[view.match.settings.mode] : '');
-    drawScene(ctx, { width, height, view, players, effects, poses, time, hints: !input.touch });
+    drawScene(ctx, { width, height, view, players, effects, poses, time, hints: !input.touch, aim });
     menus.show(menuView(time, view, players));
   } catch (error) {
     console.error(error);

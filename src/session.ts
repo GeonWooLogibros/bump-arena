@@ -134,8 +134,8 @@ export class Session {
     this.syncWorld();
   }
 
-  /** 매 프레임 부릅니다. 세계를 진행하고 그동안 일어난 일을 돌려줍니다. */
-  update(dtMs: number, input: Input, frame: Frame): WorldEvent[] {
+  /** 매 프레임 부릅니다. 세계를 진행하고 그동안 일어난 일을 돌려줍니다. aim은 마우스로 겨누는 위치(세계 좌표)이고, 키보드로 겨누면 null입니다. */
+  update(dtMs: number, input: Input, frame: Frame, aim: readonly [number, number] | null = null): WorldEvent[] {
     const dt = dtMs >= 0 && dtMs <= MAX_FRAME_MS ? dtMs : 0;
     if (frame.hosting !== this.hosting) {
       this.hosting = frame.hosting;
@@ -168,6 +168,7 @@ export class Session {
     const { phase } = this.current;
     this.input = phase === 'play' ? { ...input } : NO_INPUT;
     world.setInput(this.me, this.input);
+    world.setAimPoint(this.me, aim);
     if (phase !== 'play') this.rest(world);
     if (phase === 'countdown') {
       this.acc = 0;

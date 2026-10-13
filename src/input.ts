@@ -29,12 +29,22 @@ const PAD: readonly { key: Key; label: string; name: string }[] = [
 /** Cmd, Ctrl, Alt 키 자체의 code입니다. Shift는 특수 동작에 쓰므로 여기에 넣지 않습니다. */
 const MODIFIER = /^(Meta|OS|Control|Alt)(Left|Right)$/;
 
-/** 지금 누르고 있는 키와 터치 버튼을 기억합니다. 화면 요소를 쓰지 않습니다. */
+/**
+ * 지금 누르고 있는 키, 터치 버튼, 마우스를 기억합니다. 화면 요소를 쓰지 않습니다.
+ * 겨누는 방향은 마지막으로 쓴 장치가 정합니다. 마우스를 움직이거나 누르면 마우스로 겨누고,
+ * 키보드로 모으는 동안 방향키를 새로 누르면 키보드로 겨눕니다. 그 밖의 방향키는 이동이므로 겨누는 장치를 바꾸지 않습니다.
+ */
 export class InputState {
   /** 누르고 있는 키의 code입니다. */
   private readonly codes = new Set<string>();
   /** 버튼마다 그 버튼을 누르고 있는 손가락(pointer id)입니다. */
   private readonly pointers = new Map<Key, Set<number>>();
+  /** 마우스의 마지막 위치(화면 px)입니다. 아직 움직이지 않았거나 창을 벗어났으면 null입니다. */
+  private mouse: readonly [number, number] | null = null;
+  /** 마우스 왼쪽 버튼을 누르고 있는지 여부. */
+  private button = false;
+  /** 키보드로 겨누고 있는지 여부. */
+  private keyAim = false;
 
   /**
    * 키를 눌렀을 때 부릅니다. 게임이 쓴 키이면 true를 돌려줍니다.
@@ -48,6 +58,8 @@ export class InputState {
       return false;
     }
     if (chord || !(code in KEYS)) return false;
+    // 누르고 있는 키는 같은 keydown이 되풀이되어 들어오므로 새로 누른 키만 봅니다.
+    if (!this.codes.has(code) && KEYS[code] !== 'special' && this.keySpecial()) this.keyAim = true;
     this.codes.add(code);
     return true;
   }
@@ -75,17 +87,49 @@ export class InputState {
     this.pointers.clear();
   }
 
+  mouseMove(x: number, y: number): void {
+    this.mouse = [x, y];
+    this.keyAim = false;
+  }
+
+  /** 마우스 왼쪽 버튼을 눌렀을 때 부릅니다. 누르는 동안 특수 동작입니다. */
+  mouseDown(x: number, y: number): void {
+    this.mouseMove(x, y);
+    this.button = true;
+  }
+
+  mouseUp(): void {
+    this.button = false;
+  }
+
+  /** 마우스가 창을 벗어났을 때 부릅니다. 버튼을 누른 채로 벗어났으면 마지막 위치로 계속 겨눕니다. */
+  mouseLeave(): void {
+    if (!this.button) this.mouse = null;
+  }
+
+  /** 마우스로 겨누고 있으면 그 위치(화면 px)이고, 키보드로 겨누고 있으면 null입니다. */
+  pointer(): readonly [number, number] | null {
+    return this.keyAim ? null : this.mouse;
+  }
+
   /** 창이 가려지거나 초점을 잃었을 때 부릅니다. 그동안의 뗌은 알 수 없으므로 모두 뗀 것으로 봅니다. */
   reset(): void {
     this.codes.clear();
     this.pointers.clear();
+    this.button = false;
   }
 
   read(): Input {
-    const held = { left: false, right: false, up: false, down: false, special: false };
+    const held = { left: false, right: false, up: false, down: false, special: this.button };
     for (const code of this.codes) held[KEYS[code]] = true;
     for (const [key, set] of this.pointers) if (set.size > 0) held[key] = true;
     return held;
+  }
+
+  /** 키보드의 특수 동작 키를 누르고 있는지 알려 줍니다. */
+  private keySpecial(): boolean {
+    for (const code of this.codes) if (KEYS[code] === 'special') return true;
+    return false;
   }
 }
 
@@ -98,9 +142,11 @@ function typing(target: EventTarget | null): boolean {
   );
 }
 
-/** 키보드(방향키, WASD, 스페이스, X/Shift)와 터치 버튼의 입력을 읽습니다. */
+/** 키보드(방향키, WASD, 스페이스, X/Shift), 마우스, 터치 버튼의 입력을 읽습니다. */
 export function attachInput(root: HTMLElement): {
   read(): Input;
+  /** 마우스로 겨누고 있으면 그 위치(화면 px)이고, 아니면 null입니다. */
+  pointer(): readonly [number, number] | null;
   /** 터치 버튼을 쓰는 기기인지 여부. 그런 기기에서는 키보드 조작 안내를 보여 주지 않습니다. */
   readonly touch: boolean;
   /** 경기에서 공을 조작하고 있는지 알려 줍니다. 그동안에는 스페이스가 초점이 있는 버튼을 누르지 않습니다. */
@@ -136,6 +182,29 @@ export function attachInput(root: HTMLElement): {
     state.keyUp(event.code);
     // 버튼은 스페이스를 뗄 때 눌리므로, 경기 중에는 뗄 때에도 막습니다.
     if (playing && event.code === 'Space' && event.target instanceof HTMLButtonElement) event.preventDefault();
+  });
+  // 터치는 화면의 버튼으로만 조작하므로 마우스만 읽습니다.
+  window.addEventListener('pointermove', (event) => {
+    if (event.pointerType !== 'mouse') return;
+    state.mouseMove(event.clientX, event.clientY);
+    // 창 밖에서 버튼을 떼면 뗌을 알 수 없으므로, 움직일 때마다 버튼이 아직 눌려 있는지 봅니다.
+    if ((event.buttons & 1) === 0) state.mouseUp();
+  });
+  window.addEventListener('pointerdown', (event) => {
+    // 메뉴의 버튼을 누르는 클릭은 특수 동작으로 치지 않도록, 경기 화면을 누른 것만 봅니다.
+    if (event.pointerType !== 'mouse' || event.button !== 0 || !(event.target instanceof HTMLCanvasElement)) return;
+    state.mouseDown(event.clientX, event.clientY);
+    // 누른 채로 끌어도 화면의 글자가 골라지지 않게 합니다.
+    if (playing) event.preventDefault();
+  });
+  for (const type of ['pointerup', 'pointercancel'] as const) {
+    window.addEventListener(type, (event) => {
+      if (event.pointerType === 'mouse' && event.button === 0) state.mouseUp();
+    });
+  }
+  document.documentElement.addEventListener('mouseleave', () => state.mouseLeave());
+  window.addEventListener('contextmenu', (event) => {
+    if (playing && event.target instanceof HTMLCanvasElement) event.preventDefault();
   });
   window.addEventListener('blur', reset);
   document.addEventListener('visibilitychange', () => {
@@ -174,6 +243,7 @@ export function attachInput(root: HTMLElement): {
 
   return {
     read: () => state.read(),
+    pointer: () => state.pointer(),
     touch: coarse,
     setPlaying(value) {
       playing = value;
