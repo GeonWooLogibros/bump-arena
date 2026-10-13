@@ -213,7 +213,7 @@ describe.each(SEED_SETS)('AI끼리 하는 모의 경기 480판($name)', ({ seeds
     table = report(games);
     if (seeds === SEEDS) mirrors.set(skill, games);
     if (import.meta.env.VITE_BOT_SIM_REPORT) console.log(table);
-  }, 20000);
+  });
 
   it('모드 3개 × 맵 16개 × AI 수 2개 × 시드 5개를 모두 돌린다', () => {
     expect(games).toHaveLength(480);
@@ -262,7 +262,7 @@ describe('수준에 따른 자멸', () => {
     for (const { id } of DIFFICULTIES) {
       if (!mirrors.has(id)) mirrors.set(id, mirror(SEEDS, id));
     }
-  }, 60000);
+  });
 
   it.each([
     { name: '쉬움', skill: 'easy' },
@@ -318,7 +318,7 @@ describe.each(DUELS)('수준이 다른 AI의 1대1 288판($name)', ({ name, stro
     }
     table = `\n${lines.join('\n')}\n`;
     if (import.meta.env.VITE_BOT_SIM_REPORT) console.log(table);
-  }, 20000);
+  });
 
   it('모드 3개 × 맵 16개 × 시드 6개를 모두 돌린다', () => {
     expect(games).toHaveLength(288);
