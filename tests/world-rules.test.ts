@@ -143,22 +143,66 @@ describe('갈고리 충전량', () => {
     world.setInput('a', press('special'));
     run(world, (TUNING.ropeDrainTime * SECOND) / 2);
     expect(world.rope('a')).not.toBeNull();
-    expect(view(world).fuel).toBeCloseTo(0.5, 1);
+    expect(view(world).fuel).toBeCloseTo(0.5 - TUNING.ropeHookCost, 2);
+  });
+
+  it('줄을 걸 때마다 ropeHookCost만큼 바로 줄어들고, 그보다 많이 남아 있지 않으면 걸지 못한다', () => {
+    const world = hanging();
+    world.setInput('a', press('special'));
+    run(world, 1);
+    expect(view(world).fuel).toBeCloseTo(1 - TUNING.ropeHookCost - 1 / (TUNING.ropeDrainTime * SECOND), 5);
+    const low = hanging();
+    low.setMeters('a', { heft: 1, fuel: TUNING.ropeHookCost, lock: 0 });
+    low.setInput('a', press('special'));
+    expect(run(low, 1).filter((e) => e.type === 'rope')).toHaveLength(0);
+    expect(low.rope('a')).toBeNull();
+    expect(view(low).locked).toBe(false);
+  });
+
+  it('줄을 푼 뒤 ropeFillDelay 동안은 차지 않는다', () => {
+    const world = hanging();
+    world.setInput('a', press('special'));
+    run(world, SECOND);
+    world.setInput('a', NO_INPUT);
+    run(world, 1);
+    const left = view(world).fuel;
+    run(world, TUNING.ropeFillDelay * SECOND - 2);
+    expect(view(world).fuel).toBe(left);
+    run(world, 10);
+    expect(view(world).fuel).toBeGreaterThan(left);
+  });
+
+  it('짧게 걸었다 풀기를 되풀이해도 오래 매달릴 수 없고 결국 잠긴다', () => {
+    const world = hanging();
+    let hung = 0;
+    let locks = 0;
+    const total = 60 * SECOND;
+    for (let step = 0; step < total; step++) {
+      // 4 step 누르고 3 step 떼기를 되풀이합니다.
+      world.setInput('a', step % 7 < 4 ? press('special') : NO_INPUT);
+      locks += world.step().filter((e) => e.type === 'lock').length;
+      if (world.rope('a')) hung++;
+    }
+    expect(locks).toBeGreaterThan(0);
+    expect(hung / total).toBeLessThan(0.2);
   });
 
   it('다 쓰면 줄이 풀리고 ropeLockTime 동안 잠긴 뒤 0에서부터 ropeFillTime에 걸쳐 찬다', () => {
     const world = hanging();
     world.setInput('a', press('special'));
-    run(world, TUNING.ropeDrainTime * SECOND + 2);
+    // 줄을 걸 때 든 양만큼 일찍 바닥납니다.
+    const events = run(world, (1 - TUNING.ropeHookCost) * TUNING.ropeDrainTime * SECOND + 2);
+    expect(events.filter((e) => e.type === 'lock')).toEqual([{ type: 'lock', id: 'a' }]);
     expect(world.rope('a')).toBeNull();
     expect(view(world)).toMatchObject({ fuel: 0, locked: true });
+    expect(view(world).lock).toBeGreaterThan(TUNING.ropeLockTime - 1);
     // 누르고 있어도 다시 걸리지 않습니다.
     run(world, TUNING.ropeLockTime * SECOND - 10);
     expect(world.rope('a')).toBeNull();
     expect(view(world)).toMatchObject({ fuel: 0, locked: true });
     world.setInput('a', NO_INPUT);
     run(world, 10);
-    expect(view(world).locked).toBe(false);
+    expect(view(world)).toMatchObject({ locked: false, lock: 0 });
     run(world, (TUNING.ropeFillTime * SECOND) / 2);
     expect(view(world).fuel).toBeCloseTo(0.5, 1);
     run(world, (TUNING.ropeFillTime * SECOND) / 2 + 5);
@@ -173,6 +217,8 @@ describe('갈고리 충전량', () => {
     world.setInput('a', NO_INPUT);
     run(world, 40);
     expect(view(world).locked).toBe(false);
+    // 줄을 거는 데 드는 양보다 많이 찰 때까지 기다립니다.
+    run(world, TUNING.ropeHookCost * TUNING.ropeFillTime * SECOND + 5);
     world.setInput('a', press('special'));
     expect(run(world, 1).filter((e) => e.type === 'rope')).toHaveLength(1);
     expect(world.rope('a')).not.toBeNull();
@@ -183,8 +229,8 @@ describe('갈고리 충전량', () => {
     world.setInput('a', press('special'));
     run(world, (TUNING.ropeDrainTime * SECOND) / 2);
     world.setInput('a', NO_INPUT);
-    run(world, (TUNING.ropeFillTime * SECOND) / 4);
-    expect(view(world).fuel).toBeCloseTo(0.75, 1);
+    run(world, (TUNING.ropeFillDelay + TUNING.ropeFillTime / 4) * SECOND);
+    expect(view(world).fuel).toBeCloseTo(0.75 - TUNING.ropeHookCost, 2);
     expect(view(world).locked).toBe(false);
   });
 
@@ -194,17 +240,35 @@ describe('갈고리 충전량', () => {
     run(world, 1);
     expect(world.rope('a')).not.toBeNull();
     // 바로 위에서 다른 공이 떨어집니다.
-    world.addBall('b', 16, 7.2, true);
-    run(world, 30);
+    world.addBall('b', 16, 6.85, true);
+    const events = run(world, 30);
+    expect(events.filter((e) => e.type === 'lock')).toEqual([{ type: 'lock', id: 'a' }]);
     expect(world.rope('a')).toBeNull();
     expect(view(world)).toMatchObject({ fuel: 0, locked: true });
     expect(view(world, 'b')).toMatchObject({ fuel: 1, locked: false });
   });
 
+  it('다른 공과 닿아 있거나 밀리고 있을 때 줄을 걸어도 바로 풀리지 않는다', () => {
+    // 가운데 기둥 위에 두 공이 붙어 서 있고, 한쪽이 다른 쪽을 계속 밉니다.
+    const world = new World(PILLARS, 'grapple');
+    world.addBall('a', 16.3, 9.5, true);
+    world.addBall('b', 15.3, 9.5, true);
+    run(world, 30);
+    world.setInput('b', press('right'));
+    run(world, 20);
+    expect(Math.hypot(world.state('a')!.x - world.state('b')!.x, world.state('a')!.y - world.state('b')!.y)).toBeLessThan(1.05);
+    world.setInput('a', press('special'));
+    const events = run(world, 30);
+    expect(events.filter((e) => e.type === 'rope')).toHaveLength(1);
+    expect(events.filter((e) => e.type === 'lock')).toHaveLength(0);
+    expect(world.rope('a')).not.toBeNull();
+    expect(view(world).locked).toBe(false);
+  });
+
   it('원격 공은 부딪치거나 충전량이 바닥나도 스스로 줄을 풀지 않고, 받은 값을 따른다', () => {
     const world = hanging(false);
     world.setRope('a', [16, 6.3]);
-    world.addBall('b', 16, 7.2, true);
+    world.addBall('b', 16, 6.85, true);
     run(world, 30);
     expect(world.rope('a')).not.toBeNull();
     expect(view(world).locked).toBe(false);

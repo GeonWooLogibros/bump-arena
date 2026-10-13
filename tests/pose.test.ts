@@ -29,7 +29,7 @@ import {
 import type { SessionView } from '../src/session';
 
 function ballAt(id: string, x: number, y: number, patch: Partial<BallView> = {}): BallView {
-  return { id, x, y, angle: 0, alive: true, heavy: false, heft: 1, fuel: 1, locked: false, rope: null, aim: null, ...patch };
+  return { id, x, y, angle: 0, alive: true, heavy: false, heft: 1, fuel: 1, locked: false, lock: 0, rope: null, aim: null, ...patch };
 }
 
 function arrowAt(id: number, x: number, y: number): ArrowView {

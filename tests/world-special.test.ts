@@ -179,6 +179,8 @@ describe('좌우 키로 겨누기', () => {
 
   it('오른쪽 키는 시계 방향으로, 왼쪽 키는 반대로 arrowTurnSpeed만큼 돌린다', () => {
     const world = standing();
+    world.setInput('a', press('special'));
+    run(world, 1);
     world.setInput('a', press('special', 'right'));
     run(world, 12);
     const [dx, dy] = turned(TUNING.arrowTurnSpeed * 0.2);
@@ -193,9 +195,12 @@ describe('좌우 키로 겨누기', () => {
 
   it('좌우 키를 떼거나 둘 다 누르면 방향이 그대로이고, 놓으면 그 방향으로 쏜다', () => {
     const world = standing();
+    world.setInput('a', press('special'));
+    run(world, 1);
     world.setInput('a', press('special', 'right'));
     run(world, 12);
     const { dx, dy } = world.aim('a')!;
+    expect(dx).not.toBeCloseTo(Math.SQRT1_2, 2);
     world.setInput('a', press('special'));
     run(world, 6);
     world.setInput('a', press('special', 'left', 'right'));
@@ -219,6 +224,31 @@ describe('좌우 키로 겨누기', () => {
     run(world, 1);
     expect(world.aim('a')!.dx).toBeCloseTo(Math.SQRT1_2);
     expect(world.aim('a')!.dy).toBeCloseTo(-Math.SQRT1_2);
+  });
+
+  it('모으기 전부터 누르고 있던 좌우 키는 한 번 뗐다가 다시 누를 때까지 방향을 돌리지 않는다', () => {
+    const world = standing();
+    // 오른쪽으로 달리다가 그대로 모으기 시작합니다.
+    world.setInput('a', press('right'));
+    run(world, 10);
+    world.setInput('a', press('special', 'right'));
+    run(world, 30);
+    expect(world.aim('a')!.dx).toBeCloseTo(Math.SQRT1_2);
+    expect(world.aim('a')!.dy).toBeCloseTo(-Math.SQRT1_2);
+    // 왼쪽 키는 새로 누른 것이므로 바로 돌립니다.
+    world.setInput('a', press('special', 'right', 'left'));
+    run(world, 6);
+    const [lx, ly] = turned(-TUNING.arrowTurnSpeed * 0.1);
+    expect(world.aim('a')!.dx).toBeCloseTo(lx, 5);
+    expect(world.aim('a')!.dy).toBeCloseTo(ly, 5);
+    // 오른쪽 키를 뗐다가 다시 누르면 그때부터 돌립니다.
+    world.setInput('a', press('special'));
+    run(world, 1);
+    world.setInput('a', press('special', 'right'));
+    run(world, 12);
+    const [rx, ry] = turned(TUNING.arrowTurnSpeed * 0.1);
+    expect(world.aim('a')!.dx).toBeCloseTo(rx, 5);
+    expect(world.aim('a')!.dy).toBeCloseTo(ry, 5);
   });
 
   it('위아래 키로는 방향이 바뀌지 않는다', () => {

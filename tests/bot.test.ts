@@ -208,7 +208,8 @@ describe('갈고리', () => {
 
   it('줄이 잠겨 있거나 충전량이 거의 없으면 줄을 걸지 않고 벽만 찹니다', () => {
     const falling = { mode: 'grapple', me: at(4.3, 13, 0, 5) } as const;
-    for (const meters of [{ locked: true, fuel: 0 }, { locked: false, fuel: 0.05 }]) {
+    // 줄을 거는 데 드는 양(0.1)을 빼면 얼마 매달리지 못하는 충전량에서도 걸지 않습니다.
+    for (const meters of [{ locked: true, fuel: 0 }, { locked: false, fuel: 0.05 }, { locked: false, fuel: 0.25 }]) {
       const input = new Bot(() => 0.5).think(sense({ ...falling, ...meters }), TICK);
       expect(input.special).toBe(false);
       expect(input.up).toBe(true);

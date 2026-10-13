@@ -76,7 +76,8 @@ export interface Meters {
 
 /**
  * 화면에 그릴 공 하나의 모습입니다. charge는 0~1입니다.
- * heft는 무거워지기의 남은 효과(0~1), fuel은 갈고리 충전량(0~1)이고, locked는 줄을 쓸 수 없이 잠겨 있는지 여부입니다.
+ * heft는 무거워지기의 남은 효과(0~1), fuel은 갈고리 충전량(0~1)입니다.
+ * locked는 줄을 쓸 수 없이 잠겨 있는지 여부이고, lock은 잠김이 풀리기까지 남은 시간(초)입니다.
  */
 export interface BallView {
   id: string;
@@ -88,6 +89,7 @@ export interface BallView {
   heft: number;
   fuel: number;
   locked: boolean;
+  lock: number;
   rope: readonly [number, number] | null;
   aim: { dx: number; dy: number; charge: number } | null;
 }
@@ -116,6 +118,7 @@ export type WorldEvent =
   | { type: 'out'; id: string; x: number; y: number; cause: 'fall' | 'arrow' }
   | { type: 'jump'; id: string }
   | { type: 'rope'; id: string }
+  | { type: 'lock'; id: string }
   | { type: 'shoot'; id: string }
   | { type: 'stick' };
 
@@ -149,6 +152,10 @@ interface Entry {
   /** 갈고리 충전량(0~1)과, 줄을 쓸 수 없는 남은 시간(초)입니다. */
   fuel: number;
   lock: number;
+  /** 줄을 푼 뒤 충전량이 다시 차기 시작하기까지 남은 시간(초)입니다. */
+  fillWait: number;
+  /** 화살을 모으기 시작할 때부터 누르고 있던 좌우 키입니다. 한 번 뗄 때까지는 방향을 돌리는 데 쓰지 않습니다. */
+  stale: { left: boolean; right: boolean };
   input: Readonly<Input>;
   prevInput: Readonly<Input>;
   lastJump: number;
@@ -299,6 +306,8 @@ export class World {
       mass: 1,
       fuel: 1,
       lock: 0,
+      fillWait: 0,
+      stale: { left: false, right: false },
       input: NO_INPUT,
       prevInput: NO_INPUT,
       lastJump: -Infinity,
@@ -359,7 +368,7 @@ export class World {
     }
     this.world.step(TUNING.step);
     this.time += TUNING.step;
-    if (this.mode === 'grapple') this.bumpRopes();
+    if (this.mode === 'grapple') this.bumpRopes(events);
     this.now = mapAt(this.map, this.clock);
     const tick = Math.floor(this.clock / FOOTING_STEP + 1e-9);
     if (tick !== this.footTick) {
@@ -395,6 +404,7 @@ export class World {
       heft: e.heft,
       fuel: e.fuel,
       locked: e.lock > 0,
+      lock: e.lock,
       rope: e.rope ? this.anchorOf(e.rope) : null,
       aim: e.aim,
     }));
@@ -669,7 +679,7 @@ export class World {
       if (this.mode === 'grapple') this.driveRope(id, entry, events);
       if (this.mode === 'arrows') this.driveArrow(id, entry, events);
     }
-    if (this.mode === 'grapple') this.tickRope(entry);
+    if (this.mode === 'grapple') this.tickRope(id, entry, events);
     this.weigh(entry, body, fixture);
     // 화살을 모으는 동안에는 좌우 키가 방향을 돌리는 데 쓰이므로 좌우로 움직이지 않습니다. 쏜 직후처럼 모을 수 없을 때는 움직입니다.
     const aiming = this.mode === 'arrows' && entry.aim !== null;
@@ -702,15 +712,19 @@ export class World {
       : Math.min(1, entry.heft + TUNING.step / TUNING.heavyRecoverTime);
   }
 
-  /** special을 누르는 순간 줄을 걸고 떼면 풉니다. 충전량이 없거나 잠겨 있으면 걸지 못합니다. */
+  /**
+   * special을 누르는 순간 줄을 걸고 떼면 풉니다. 걸 때마다 충전량이 ropeHookCost만큼 바로 줄어듭니다.
+   * 잠겨 있거나 충전량이 그보다 많지 않으면 걸지 못합니다.
+   */
   private driveRope(id: string, entry: Entry, events: WorldEvent[]): void {
     if (!entry.input.special) {
       this.release(entry);
-    } else if (!entry.prevInput.special && entry.body && entry.lock === 0 && entry.fuel > 0) {
+    } else if (!entry.prevInput.special && entry.body && entry.lock === 0 && entry.fuel > TUNING.ropeHookCost) {
       const p = entry.body.getPosition();
       const anchor = this.ropeTarget(entry, p.x, p.y);
       if (anchor) {
         this.attach(entry, anchor);
+        entry.fuel -= TUNING.ropeHookCost;
         events.push({ type: 'rope', id });
       }
     }
@@ -736,39 +750,41 @@ export class World {
   }
 
   /**
-   * 갈고리 충전량을 한 step 진행합니다. 매달려 있으면 줄고, 잠겨 있으면 잠긴 시간이 줄고, 그 밖에는 찹니다.
+   * 갈고리 충전량을 한 step 진행합니다. 매달려 있으면 줄고, 잠겨 있으면 잠긴 시간이 줄고,
+   * 그 밖에는 줄을 푼 지 ropeFillDelay가 지난 뒤부터 찹니다.
    * 다 썼을 때 줄을 풀고 잠그는 것은 주인만 정합니다. 원격 공은 주인의 소식을 기다립니다.
    */
-  private tickRope(entry: Entry): void {
+  private tickRope(id: string, entry: Entry, events: WorldEvent[]): void {
     if (entry.rope) {
+      entry.fillWait = TUNING.ropeFillDelay;
       entry.fuel = Math.max(0, entry.fuel - TUNING.step / TUNING.ropeDrainTime);
-      if (entry.local && entry.fuel === 0) this.lockRope(entry);
-    } else if (entry.lock > 0) {
-      entry.lock = Math.max(0, entry.lock - TUNING.step);
-    } else {
-      entry.fuel = Math.min(1, entry.fuel + TUNING.step / TUNING.ropeFillTime);
+      if (entry.local && entry.fuel === 0) this.lockRope(id, entry, events);
+      return;
     }
+    entry.fillWait = Math.max(0, entry.fillWait - TUNING.step);
+    if (entry.lock > 0) entry.lock = Math.max(0, entry.lock - TUNING.step);
+    else if (entry.fillWait === 0) entry.fuel = Math.min(1, entry.fuel + TUNING.step / TUNING.ropeFillTime);
   }
 
   /** 줄을 풀고 충전량을 비운 뒤 ropeLockTime 동안 줄을 쓸 수 없게 합니다. */
-  private lockRope(entry: Entry): void {
+  private lockRope(id: string, entry: Entry, events: WorldEvent[]): void {
     this.release(entry);
     entry.fuel = 0;
     entry.lock = TUNING.ropeLockTime;
+    events.push({ type: 'lock', id });
   }
 
-  /** 줄에 매달린 채 다른 공과 닿은 공의 줄을 풀고 잠급니다. 주인만 정하고, 다른 화면은 받은 줄과 충전량으로 알게 됩니다. */
-  private bumpRopes(): void {
-    for (const entry of this.entries.values()) {
-      if (!entry.local || !entry.alive || !entry.rope || !entry.body) continue;
-      for (let edge = entry.body.getContactList(); edge; edge = edge.next) {
-        const { contact } = edge;
-        if (!contact.isTouching()) continue;
-        // 공의 fixture에만 번호가 붙어 있습니다.
-        const other = contact.getFixtureA().getBody() === entry.body ? contact.getFixtureB() : contact.getFixtureA();
-        if (typeof other.getUserData() !== 'string') continue;
-        this.lockRope(entry);
-        break;
+  /**
+   * 줄에 매달린 채 다른 공과 부딪친 공의 줄을 풀고 잠급니다. 이번 step에 소리가 날 만큼 센 공끼리의 충돌만 부딪친 것으로 봅니다.
+   * 그저 닿아 있거나 밀리고 있는 것은 부딪친 것이 아니므로, 상대와 붙어 있을 때 줄을 걸어도 바로 풀리지 않습니다.
+   * 주인만 정하고, 다른 화면은 받은 줄과 충전량으로 알게 됩니다.
+   */
+  private bumpRopes(events: WorldEvent[]): void {
+    for (const { a, b } of this.hits.values()) {
+      if (a === null || b === null) continue;
+      for (const id of [a, b]) {
+        const entry = this.entries.get(id);
+        if (entry?.local && entry.alive && entry.rope) this.lockRope(id, entry, events);
       }
     }
   }
@@ -780,7 +796,10 @@ export class World {
     entry.cooldown = Math.max(0, entry.cooldown - TUNING.step);
     if (input.special && entry.cooldown === 0) {
       // 모으기 시작할 때에는 마지막에 움직이던 쪽의 비스듬한 위를 겨눕니다.
-      if (entry.charge === 0) entry.aimAngle = entry.facing > 0 ? -Math.PI / 4 : (-3 * Math.PI) / 4;
+      if (entry.charge === 0) {
+        entry.aimAngle = entry.facing > 0 ? -Math.PI / 4 : (-3 * Math.PI) / 4;
+        entry.stale = { left: input.left, right: input.right };
+      }
       this.turnAim(entry, body);
       entry.charge += TUNING.step;
       entry.aim = {
@@ -816,11 +835,14 @@ export class World {
   /**
    * 겨누는 각도를 한 step 고칩니다. 마우스로 겨누고 있으면 공에서 그 위치를 향하고, 아니면 좌우 키로 arrowTurnSpeed만큼 돌립니다.
    * 왼쪽 키는 시계 반대 방향, 오른쪽 키는 시계 방향입니다. 겨누는 위치가 공의 중심과 겹치면 각도를 그대로 둡니다.
+   * 달리다가 모으기 시작하면 누르고 있던 좌우 키 때문에 방향이 곧바로 돌아가 버리므로, 그 키는 한 번 뗐다가 다시 누를 때부터 씁니다.
    */
   private turnAim(entry: Entry, body: Body): void {
-    const { input, aimPoint } = entry;
+    const { input, aimPoint, stale } = entry;
+    stale.left &&= input.left;
+    stale.right &&= input.right;
     if (!aimPoint) {
-      const turn = (input.right ? 1 : 0) - (input.left ? 1 : 0);
+      const turn = (input.right && !stale.right ? 1 : 0) - (input.left && !stale.left ? 1 : 0);
       entry.aimAngle += turn * TUNING.arrowTurnSpeed * TUNING.step;
       return;
     }

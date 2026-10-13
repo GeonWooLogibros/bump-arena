@@ -22,6 +22,8 @@ import type { MenuView } from './ui/menus';
 const COPIED_MS = 2000;
 /** 튕기는 발판에서 튕길 때는 뛰는 소리를 이 빠르기로 높여서 냅니다. */
 const BOUNCE_RATE = 1.7;
+/** 줄이 잠길 때는 줄 거는 소리를 이 빠르기로 낮춰서 냅니다. */
+const LOCK_RATE = 0.55;
 /** 터치 화면의 특수 동작 버튼에 쓰는 글자입니다. 클래식에는 특수 동작이 없으므로 버튼을 보여 주지 않습니다. */
 const SPECIAL_LABEL: Record<Mode, string> = { classic: '', grapple: '줄', arrows: '화살' };
 
@@ -182,6 +184,9 @@ function react(events: readonly WorldEvent[], view: SessionView | null, players:
       audio.play('jump', event.id === view?.me ? 0.45 : 0.2);
     } else if (event.type === 'rope') {
       audio.play('rope', 0.6);
+    } else if (event.type === 'lock') {
+      // 줄이 풀려 잠기면 줄 거는 소리를 낮게 냅니다.
+      audio.play('rope', 0.7, LOCK_RATE);
     } else if (event.type === 'shoot') {
       audio.play('shoot', 0.8);
     } else {

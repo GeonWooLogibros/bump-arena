@@ -271,7 +271,7 @@ describe('연습 경기', () => {
     const session = practice({ mode: 'arrows' });
     tick(session, 3000);
     const { x, y } = ball(session, 'me');
-    for (let i = 0; i < 20; i++) session.update(FRAME_MS, press('special', 'right'), SOLO, [x - 3, y - 4]);
+    for (let i = 0; i < 20; i++) session.update(FRAME_MS, press('special'), SOLO, [x - 3, y - 4]);
     const aim = ball(session, 'me').aim!;
     expect(aim.dx).toBeCloseTo(-0.6, 1);
     expect(aim.dy).toBeCloseTo(-0.8, 1);
@@ -1141,7 +1141,7 @@ describe('무거워지기와 갈고리 충전량 알리기', () => {
     made.run((TUNING.ropeDrainTime * 1000) / 2);
     expect(ball(b, 'b').rope).not.toBeNull();
     expect(ball(a, 'b').rope).not.toBeNull();
-    expect(ball(b, 'b').fuel).toBeCloseTo(0.5, 1);
+    expect(ball(b, 'b').fuel).toBeCloseTo(0.5 - TUNING.ropeHookCost, 1);
     expect(ball(a, 'b').fuel).toBeCloseTo(ball(b, 'b').fuel, 1);
     made.run((TUNING.ropeDrainTime * 1000) / 2 + 300);
     expect(ball(b, 'b')).toMatchObject({ rope: null, fuel: 0, locked: true });

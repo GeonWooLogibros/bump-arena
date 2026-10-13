@@ -37,8 +37,8 @@ const RESCUE_DEPTH = 2.5;
 const HOOK_REACH = 1.6;
 /** 줄에 매달린 채 속력이 이보다 느려지면 줄을 놓습니다(m/s). */
 const ROPE_SLOW = 1.5;
-/** 갈고리 충전량이 이보다 적으면 줄을 걸지 않고 벽을 찹니다. 걸자마자 풀려서 잠기기만 합니다. */
-const HOOK_FUEL = 0.15;
+/** 갈고리 충전량이 이보다 적으면 줄을 걸지 않고 벽을 찹니다. 줄을 거는 데 드는 양을 빼고도 0.8초쯤 매달릴 수 있어야 올라올 수 있습니다. */
+const HOOK_FUEL = TUNING.ropeHookCost + 0.2;
 
 /** 목표를 다시 고르는 간격(초)의 범위입니다. */
 const RETARGET_MIN = 3;

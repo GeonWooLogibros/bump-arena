@@ -294,23 +294,25 @@ function drawBall(ctx: CanvasRenderingContext2D, pose: BallPose, colors: BallCol
 }
 
 /**
- * 갈고리 충전량을 공 둘레에 그립니다. 남은 만큼이 위에서부터 시계 방향으로 이어진 호이고, 잠겨 있으면 둘레 전체가 빨간색입니다.
+ * 갈고리 충전량을 공 둘레에 그립니다. 남은 만큼이 위에서부터 시계 방향으로 이어진 호입니다.
+ * 잠겨 있으면 빨간색 호가 남은 잠금 시간만큼 이어지고, 다 줄어들면 잠김이 풀립니다.
  * 내 공의 것은 굵고 또렷하게, 다른 공의 것은 가늘고 옅게 그립니다.
  */
 function drawGauge(ctx: CanvasRenderingContext2D, pose: BallPose, mine: boolean, px: number): void {
-  const { fuel, locked } = pose.ball;
+  const { fuel, locked, lock } = pose.ball;
   const radius = TUNING.radius + GAUGE_RING;
   ctx.globalAlpha = mine ? 1 : GAUGE_OTHER_ALPHA;
   ctx.lineCap = 'butt';
   ctx.lineWidth = (mine ? 4 : 2.5) * px;
-  ctx.strokeStyle = locked ? GAUGE_LOCKED : GAUGE_TRACK;
+  ctx.strokeStyle = GAUGE_TRACK;
   ctx.beginPath();
   ctx.arc(pose.x, pose.y, radius, 0, TAU);
   ctx.stroke();
-  if (!locked && fuel > 0) {
-    ctx.strokeStyle = GAUGE;
+  const part = locked ? lock / TUNING.ropeLockTime : fuel;
+  if (part > 0) {
+    ctx.strokeStyle = locked ? GAUGE_LOCKED : GAUGE;
     ctx.beginPath();
-    ctx.arc(pose.x, pose.y, radius, -Math.PI / 2, -Math.PI / 2 + TAU * Math.min(1, fuel));
+    ctx.arc(pose.x, pose.y, radius, -Math.PI / 2, -Math.PI / 2 + TAU * Math.min(1, part));
     ctx.stroke();
   }
   ctx.globalAlpha = 1;
@@ -479,6 +481,7 @@ const BACKDROP_BALL: BallView = {
   heft: 1,
   fuel: 1,
   locked: false,
+  lock: 0,
   rope: null,
   aim: null,
 };

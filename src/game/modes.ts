@@ -32,6 +32,8 @@ export const DEFAULT_TARGET = 5;
  * heavyFadeTime은 무거워지기를 누르고 있을 때 효과가 모두 사라지기까지의 시간이고, heavyRecoverTime은 뗀 뒤 모두 돌아오기까지의 시간입니다.
  * ropeDrainTime은 줄에 매달려 충전량을 다 쓰기까지의 시간, ropeFillTime은 0에서 가득 차기까지의 시간,
  * ropeLockTime은 충전량을 다 쓰거나 매달린 채 다른 공과 부딪친 뒤 줄을 쓸 수 없는 시간입니다.
+ * ropeHookCost는 줄을 걸 때마다 바로 줄어드는 충전량이고, ropeFillDelay는 줄을 푼 뒤 충전량이 다시 차기 시작하기까지의 시간입니다.
+ * 이 둘이 있어서 줄을 짧게 걸었다 풀기를 되풀이해도 끝없이 매달릴 수 없습니다.
  * arrowTurnSpeed는 화살을 모으는 동안 좌우 키로 방향을 돌리는 빠르기(라디안/초)입니다.
  */
 export const TUNING = {
@@ -53,6 +55,8 @@ export const TUNING = {
   ropeDrainTime: 4,
   ropeFillTime: 3,
   ropeLockTime: 2.5,
+  ropeHookCost: 0.1,
+  ropeFillDelay: 0.5,
   arrowMinCharge: 0.2,
   arrowMaxCharge: 1,
   arrowMinSpeed: 12,
