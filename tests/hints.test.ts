@@ -2,28 +2,32 @@ import { describe, expect, it } from 'vitest';
 import { HINT_DIM, HINT_FADE_MS, HINT_HOLD_MS, hintOpacity, hintRows } from '../src/render/hints';
 
 describe('hintRows', () => {
-  it('모든 모드에서 이동과 뛰기를 먼저 보여 준다', () => {
+  it('모든 모드에서 이동, 뛰기, 무거워지기를 먼저 보여 준다', () => {
     for (const mode of ['classic', 'grapple', 'arrows'] as const) {
       const rows = hintRows(mode);
       expect(rows[0]).toEqual({ keys: ['←', '→'], label: '이동' });
-      expect(rows[1]).toEqual({ keys: ['스페이스'], label: '뛰기' });
+      expect(rows[1]).toEqual({ keys: ['↑', '스페이스'], label: '뛰기' });
+      expect(rows[2]).toEqual({ keys: ['X'], mouse: 'right', label: '무거워지기' });
     }
   });
 
-  it('X 뒤에 그 모드의 동작 이름을 쓴다', () => {
-    expect(hintRows('classic')[2]).toEqual({ keys: ['X'], mouse: 'left', label: '무거워지기' });
-    expect(hintRows('grapple')[2]).toEqual({ keys: ['X'], mouse: 'left', label: '줄 걸기' });
+  it('클래식에는 특수 동작이 없다', () => {
     expect(hintRows('classic')).toHaveLength(3);
-    expect(hintRows('grapple')).toHaveLength(3);
   });
 
-  it('화살 모드에서는 겨누기, 모으기, 쏘기를 키와 마우스로 알려 준다', () => {
-    expect(hintRows('arrows').slice(2)).toEqual([
-      { keys: [], mouse: 'move', label: '마우스로 겨누기' },
-      { keys: ['X'], mouse: 'left', label: '누르는 동안 힘 모으기' },
-      { keys: ['방향키'], label: 'X로 모으는 동안 겨누기' },
-      { keys: ['X'], mouse: 'left', label: '떼면 화살 쏘기' },
+  it('갈고리 모드에서는 Z와 마우스 왼쪽 버튼으로 줄을 건다고 알려 준다', () => {
+    expect(hintRows('grapple').slice(3)).toEqual([{ keys: ['Z'], mouse: 'left', label: '누르는 동안 줄 걸기' }]);
+  });
+
+  it('화살 모드에서는 모아서 쏘는 것과 좌우 키나 마우스로 겨누는 것을 알려 준다', () => {
+    expect(hintRows('arrows').slice(3)).toEqual([
+      { keys: ['Z'], mouse: 'left', label: '모았다가 떼어 쏘기' },
+      { keys: ['←', '→'], mouse: 'move', label: '모으는 동안 겨누기' },
     ]);
+  });
+
+  it('안내는 다섯 줄을 넘지 않는다', () => {
+    for (const mode of ['classic', 'grapple', 'arrows'] as const) expect(hintRows(mode).length).toBeLessThanOrEqual(5);
   });
 
   it('문구에 "주세요"를 쓰지 않는다', () => {

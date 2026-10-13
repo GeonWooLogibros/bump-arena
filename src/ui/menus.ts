@@ -241,8 +241,12 @@ export function createMenus(root: HTMLElement, actions: MenuActions): { show(vie
       el('dd', '', '이동'),
       el('dt', '', '스페이스 또는 ↑ W'),
       el('dd', '', '뛰기'),
-      el('dt', '', 'X 또는 Shift'),
-      el('dd', '', '특수 동작'),
+      el('dt', '', '↓ 또는 S'),
+      el('dd', '', '아래로 힘 주기'),
+      el('dt', '', 'X, Shift 또는 마우스 오른쪽'),
+      el('dd', '', '무거워지기'),
+      el('dt', '', 'Z 또는 마우스 왼쪽'),
+      el('dd', '', '특수 동작(갈고리, 화살)'),
     );
     panel.append(guide);
     return panel;

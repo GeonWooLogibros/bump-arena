@@ -4,11 +4,11 @@ import type { Phase } from '../game/round';
 
 /**
  * 안내 한 줄입니다. keys는 키 모양으로 그릴 글자들이고 label은 그 키가 하는 일입니다.
- * mouse가 있으면 키 뒤에 마우스 그림을 그립니다. 'move'는 마우스를 움직이는 것이고 'left'는 왼쪽 버튼입니다.
+ * mouse가 있으면 키 뒤에 마우스 그림을 그립니다. 'move'는 마우스를 움직이는 것이고 'left'와 'right'는 그쪽 버튼입니다.
  */
 export interface HintRow {
   keys: string[];
-  mouse?: 'move' | 'left';
+  mouse?: 'move' | 'left' | 'right';
   label: string;
 }
 
@@ -19,20 +19,20 @@ export const HINT_FADE_MS = 1500;
 /** 흐려진 뒤의 불투명도입니다. 눈에 덜 띄지만 찾으면 읽을 수 있는 정도입니다. */
 export const HINT_DIM = 0.32;
 
+/** 모든 모드에서 같은 조작입니다. */
 const COMMON: readonly HintRow[] = [
   { keys: ['←', '→'], label: '이동' },
-  { keys: ['스페이스'], label: '뛰기' },
+  { keys: ['↑', '스페이스'], label: '뛰기' },
+  { keys: ['X'], mouse: 'right', label: '무거워지기' },
 ];
 
-/** 모드마다 다른 특수 동작의 안내입니다. 화살은 겨누고 누르고 떼는 순서를 알려 줍니다. */
+/** 모드마다 다른 특수 동작의 안내입니다. 클래식에는 특수 동작이 없습니다. 화살은 모아서 쏘는 것과 겨누는 방법을 알려 줍니다. */
 const SPECIAL: Record<Mode, readonly HintRow[]> = {
-  classic: [{ keys: ['X'], mouse: 'left', label: '무거워지기' }],
-  grapple: [{ keys: ['X'], mouse: 'left', label: '줄 걸기' }],
+  classic: [],
+  grapple: [{ keys: ['Z'], mouse: 'left', label: '누르는 동안 줄 걸기' }],
   arrows: [
-    { keys: [], mouse: 'move', label: '마우스로 겨누기' },
-    { keys: ['X'], mouse: 'left', label: '누르는 동안 힘 모으기' },
-    { keys: ['방향키'], label: 'X로 모으는 동안 겨누기' },
-    { keys: ['X'], mouse: 'left', label: '떼면 화살 쏘기' },
+    { keys: ['Z'], mouse: 'left', label: '모았다가 떼어 쏘기' },
+    { keys: ['←', '→'], mouse: 'move', label: '모으는 동안 겨누기' },
   ],
 };
 
@@ -43,11 +43,11 @@ export function hintRows(mode: Mode): HintRow[] {
 
 /**
  * 마우스 그림을 그립니다. (x, middle)은 왼쪽 가운데이고 height는 키 모양과 같은 높이입니다. 그린 너비를 돌려줍니다.
- * 'left'는 왼쪽 버튼을 칠하고, 'move'는 버튼을 칠하지 않고 양옆에 움직임을 나타내는 화살촉을 그립니다.
+ * 'left'와 'right'는 그쪽 버튼을 칠하고, 'move'는 버튼을 칠하지 않고 양옆에 움직임을 나타내는 화살촉을 그립니다.
  */
 function drawMouse(
   ctx: CanvasRenderingContext2D,
-  kind: 'move' | 'left',
+  kind: 'move' | 'left' | 'right',
   x: number,
   middle: number,
   height: number,
@@ -64,11 +64,11 @@ function drawMouse(
   ctx.beginPath();
   ctx.roundRect(left, top, width, height, width / 2);
   ctx.fill();
-  if (kind === 'left') {
+  if (kind !== 'move') {
     ctx.save();
     ctx.clip();
     ctx.fillStyle = '#ffffff';
-    ctx.fillRect(left, top, width / 2, split - top);
+    ctx.fillRect(kind === 'left' ? left : left + width / 2, top, width / 2, split - top);
     ctx.restore();
   }
   ctx.stroke();
